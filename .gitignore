@@ -28,6 +28,9 @@ UPDB.app/
 Geldreich/
 UAP-Check/
 
+# GeoNames gazetteer data (downloaded at build time)
+geodata/
+
 # Misc
 nul
 *.png

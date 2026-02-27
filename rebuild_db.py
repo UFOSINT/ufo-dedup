@@ -5,13 +5,15 @@ Orchestrates the full pipeline:
   1. Create fresh schema
   2. Import all 5 sources (UFOCAT skips UFOReportCtr)
   3. Apply data quality fixes (coordinates, city fields, country codes)
-  4. Enrich NUFORC records with UFOCAT metadata
-  5. Run deduplication
-  6. Copy to explorer
+  4. Geocode locations using GeoNames gazetteer
+  5. Enrich NUFORC records with UFOCAT metadata
+  6. Run deduplication
+  7. Copy to explorer
 
 Usage:
     python rebuild_db.py              # Full rebuild
     python rebuild_db.py --skip-dedup # Skip dedup (faster for testing)
+    python rebuild_db.py --skip-geocode # Skip geocoding step
 """
 import os
 import sys
@@ -153,6 +155,7 @@ def copy_to_explorer():
 def main():
     parser = argparse.ArgumentParser(description="Rebuild Unified UFO Database")
     parser.add_argument('--skip-dedup', action='store_true', help='Skip deduplication step')
+    parser.add_argument('--skip-geocode', action='store_true', help='Skip geocoding step')
     parser.add_argument('--skip-explorer', action='store_true', help='Skip explorer DB copy')
     args = parser.parse_args()
 
@@ -189,17 +192,24 @@ def main():
     step(7, "Apply data quality fixes")
     apply_data_fixes()
 
-    step(8, "Enrich NUFORC with UFOCAT metadata")
+    if not args.skip_geocode:
+        step(8, "Geocode locations (GeoNames)")
+        import geocode
+        geocode.run_geocoding()
+    else:
+        print("\n  Skipping geocoding (--skip-geocode)")
+
+    step(9, "Enrich NUFORC with UFOCAT metadata")
     run_script('enrich')
 
     if not args.skip_dedup:
-        step(9, "Deduplication")
+        step(10, "Deduplication")
         run_script('dedup')
     else:
         print("\n  Skipping deduplication (--skip-dedup)")
 
     if not args.skip_explorer:
-        step(10, "Copy to explorer")
+        step(11, "Copy to explorer")
         copy_to_explorer()
     else:
         print("\n  Skipping explorer copy (--skip-explorer)")
@@ -233,6 +243,17 @@ def main():
     """)
     enriched = cur.fetchone()[0]
     print(f"  NUFORC records with Hynek (enriched): {enriched:,}")
+
+    # Check geocoding results
+    cur.execute("""
+        SELECT COUNT(*) FROM sighting s
+        JOIN location l ON s.location_id = l.id
+        WHERE l.latitude IS NOT NULL
+    """)
+    geocoded = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM location WHERE geocode_src IS NOT NULL")
+    geonames_locs = cur.fetchone()[0]
+    print(f"  Geocoded sightings: {geocoded:,} ({geonames_locs:,} locations via GeoNames)")
 
     conn.close()
 

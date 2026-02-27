@@ -62,7 +62,8 @@ def create_schema(db_path=DB_PATH):
         region      TEXT,
         latitude    REAL,
         longitude   REAL,
-        geoname_id  INTEGER
+        geoname_id  INTEGER,
+        geocode_src TEXT          -- NULL=original, 'geonames_exact', 'geonames_city_country', 'geonames_city_only'
     )
     """)
 
