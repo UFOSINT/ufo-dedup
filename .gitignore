@@ -1,0 +1,33 @@
+# Byte-compiled / optimized
+__pycache__/
+*.pyc
+*.pyo
+
+# Data files (too large for git)
+*.db
+*.db-wal
+*.db-shm
+*.csv
+*.jsonl
+*.json
+*.accdb
+*.zip
+*.gz
+
+# Environment
+.env
+
+# The web app has its own repo (UFOSINT/ufo-explorer)
+ufo-explorer/
+
+# Source data directories
+UFOCAT/
+NUFORC/
+MUFON/
+UPDB.app/
+Geldreich/
+UAP-Check/
+
+# Misc
+nul
+*.png
