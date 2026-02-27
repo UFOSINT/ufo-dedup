@@ -188,6 +188,32 @@ def create_schema(db_path=DB_PATH):
     """)
 
     # ==========================================
+    # SENTIMENT ANALYSIS
+    # ==========================================
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS sentiment_analysis (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        sighting_id      INTEGER NOT NULL UNIQUE REFERENCES sighting(id),
+        vader_compound   REAL,
+        vader_positive   REAL,
+        vader_negative   REAL,
+        vader_neutral    REAL,
+        emo_joy          INTEGER DEFAULT 0,
+        emo_fear         INTEGER DEFAULT 0,
+        emo_anger        INTEGER DEFAULT 0,
+        emo_sadness      INTEGER DEFAULT 0,
+        emo_surprise     INTEGER DEFAULT 0,
+        emo_disgust      INTEGER DEFAULT 0,
+        emo_trust        INTEGER DEFAULT 0,
+        emo_anticipation INTEGER DEFAULT 0,
+        text_source      TEXT,
+        text_length      INTEGER,
+        created_at       TEXT DEFAULT (datetime('now'))
+    )
+    """)
+
+    # ==========================================
     # INDEXES
     # ==========================================
 
@@ -205,6 +231,8 @@ def create_schema(db_path=DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_location_coords ON location(latitude, longitude)",
         "CREATE INDEX IF NOT EXISTS idx_duplicate_status ON duplicate_candidate(status)",
         "CREATE INDEX IF NOT EXISTS idx_sighting_source_record ON sighting(source_db_id, source_record_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sentiment_sighting ON sentiment_analysis(sighting_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sentiment_compound ON sentiment_analysis(vader_compound)",
     ]
     for idx_sql in indexes:
         cur.execute(idx_sql)

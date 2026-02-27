@@ -1,0 +1,2 @@
+vaderSentiment>=3.3.2
+NRCLex==3.0.0

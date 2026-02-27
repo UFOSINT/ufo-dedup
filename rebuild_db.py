@@ -157,6 +157,7 @@ def main():
     parser.add_argument('--skip-dedup', action='store_true', help='Skip deduplication step')
     parser.add_argument('--skip-geocode', action='store_true', help='Skip geocoding step')
     parser.add_argument('--skip-explorer', action='store_true', help='Skip explorer DB copy')
+    parser.add_argument('--skip-sentiment', action='store_true', help='Skip sentiment analysis step')
     args = parser.parse_args()
 
     overall_t0 = time.time()
@@ -208,8 +209,15 @@ def main():
     else:
         print("\n  Skipping deduplication (--skip-dedup)")
 
+    if not args.skip_sentiment:
+        step(11, "Sentiment analysis (VADER + NRC)")
+        import sentiment
+        sentiment.run_sentiment()
+    else:
+        print("\n  Skipping sentiment analysis (--skip-sentiment)")
+
     if not args.skip_explorer:
-        step(11, "Copy to explorer")
+        step(12, "Copy to explorer")
         copy_to_explorer()
     else:
         print("\n  Skipping explorer copy (--skip-explorer)")
@@ -254,6 +262,11 @@ def main():
     cur.execute("SELECT COUNT(*) FROM location WHERE geocode_src IS NOT NULL")
     geonames_locs = cur.fetchone()[0]
     print(f"  Geocoded sightings: {geocoded:,} ({geonames_locs:,} locations via GeoNames)")
+
+    # Check sentiment results
+    cur.execute("SELECT COUNT(*) FROM sentiment_analysis")
+    sent_count = cur.fetchone()[0]
+    print(f"  Sentiment records: {sent_count:,}")
 
     conn.close()
 
