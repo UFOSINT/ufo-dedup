@@ -215,8 +215,7 @@ def create_schema(db_path=DB_PATH):
     # ==========================================
 
     collections = [
-        ("CAPELLA", "CAPELLA", "Jacques Vallée's Unified Phenomena Database via PhenomAInon", None),
-        ("PUBLIUS", "PUBLIUS", "Web-scraped by Publius from original reporting sites", None),
+        ("PUBLIUS", "PUBLIUS", "Compiled by Publius from original reporting sites and PhenomAInon downloads", None),
         ("GELDREICH", "GELDREICH", "Rich Geldreich's Majestic Timeline compilation from 19+ historical sources", "https://ufo-search.com"),
         ("UFOCAT", "UFOCAT", "CUFOS UFOCAT catalog — independent academic dataset", "https://cufos.org"),
     ]
@@ -237,7 +236,7 @@ def create_schema(db_path=DB_PATH):
         ("MUFON", coll_map["PUBLIUS"], "Mutual UFO Network case reports", "https://www.mufon.com", None),
         ("NUFORC", coll_map["PUBLIUS"], "National UFO Reporting Center", "https://nuforc.org", None),
         ("UFOCAT", coll_map["UFOCAT"], "CUFOS UFOCAT 2023 database", "https://cufos.org", None),
-        ("UPDB", coll_map["CAPELLA"], "Unified Phenomena Database (phenomenAInon / CAPELLA)", None, None),
+        ("UPDB", coll_map["PUBLIUS"], "PhenomAInon Unified Phenomena Database — compiled and parsed by Publius", None, None),
         ("UFO-search", coll_map["GELDREICH"], "Majestic Timeline compilation (ufo-search.com)", "https://ufo-search.com", None),
     ]
     cur.executemany("""
