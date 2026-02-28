@@ -4,7 +4,16 @@ Master rebuild script for the Unified UFO Sightings Database.
 Orchestrates the full pipeline:
   1. Create fresh schema
   2. Import all 5 sources (UFOCAT skips UFOReportCtr)
-  3. Apply data quality fixes (coordinates, city fields, country codes)
+  3. Apply data quality fixes:
+     - UFOCAT longitude sign inversion
+     - UFOCAT city from raw_text
+     - Country code normalization (USA→US, UK→GB, etc.)
+     - MUFON date \n artifacts (date_event_raw and date_event)
+     - MUFON year-0000 and negative-year date nullification
+     - Shape normalization (case folding, typo fixes, junk removal)
+     - Hynek/Vallee code uppercasing
+     - [MISSING DATA] description cleanup
+     - MUFON razor boilerplate stripping
   4. Geocode locations using GeoNames gazetteer
   5. Enrich NUFORC records with UFOCAT metadata
   6. Run deduplication
@@ -120,12 +129,143 @@ def apply_data_fixes():
     for old, new in country_map.items():
         cur.execute("UPDATE location SET country = ? WHERE country = ?", (new, old))
 
-    # Fix 4: MUFON date normalization (strip \n artifacts)
-    print("  Fixing MUFON date artifacts...")
+    # Fix 4: MUFON date normalization (strip \n artifacts from date_event_raw)
+    print("  Fixing MUFON date_event_raw artifacts...")
     cur.execute(r"""
         UPDATE sighting SET date_event_raw = REPLACE(date_event_raw, '\n', ' ')
         WHERE source_db_id = (SELECT id FROM source_database WHERE name='MUFON')
         AND date_event_raw LIKE '%\n%'
+    """)
+
+    # Fix 5: MUFON date_event newline — save time to time_raw, strip \n from date_event
+    print("  Fixing MUFON date_event newline (saving time to time_raw)...")
+    cur.execute("""
+        UPDATE sighting SET
+            time_raw = SUBSTR(date_event, INSTR(date_event, CHAR(10)) + 1),
+            date_event = SUBSTR(date_event, 1, INSTR(date_event, CHAR(10)) - 1)
+        WHERE source_db_id = (SELECT id FROM source_database WHERE name='MUFON')
+        AND INSTR(date_event, CHAR(10)) > 0
+        AND time_raw IS NULL
+    """)
+    print(f"    Fixed {cur.rowcount:,} MUFON date_event newlines")
+
+    # Fix 6: Null out MUFON year-0000 dates (invalid year from empty source field)
+    print("  Nulling MUFON year-0000 dates...")
+    cur.execute("""
+        UPDATE sighting SET date_event = NULL
+        WHERE source_db_id = (SELECT id FROM source_database WHERE name='MUFON')
+        AND date_event LIKE '0000-%'
+    """)
+    print(f"    Nulled {cur.rowcount:,} year-0000 dates")
+
+    # Fix 7: Null out negative-year dates (parsing artifacts)
+    print("  Nulling negative-year dates...")
+    cur.execute("""
+        UPDATE sighting SET date_event = NULL
+        WHERE date_event LIKE '-%'
+    """)
+    print(f"    Nulled {cur.rowcount:,} negative-year dates")
+
+    # Fix 8: Shape normalization — titlecase for simple words (not hyphenated)
+    print("  Normalizing shape case...")
+    cur.execute("""
+        UPDATE sighting SET shape = UPPER(SUBSTR(shape, 1, 1)) || LOWER(SUBSTR(shape, 2))
+        WHERE shape IS NOT NULL
+        AND shape != UPPER(SUBSTR(shape, 1, 1)) || LOWER(SUBSTR(shape, 2))
+        AND shape NOT LIKE '%-%'
+        AND shape NOT LIKE '% %'
+    """)
+    print(f"    Normalized {cur.rowcount:,} shape values")
+
+    # Fix 8b: Hyphenated shape normalization (V-shape → V-Shape)
+    cur.execute("""
+        UPDATE sighting SET shape =
+            UPPER(SUBSTR(shape, 1, 1)) || LOWER(SUBSTR(shape, 2, INSTR(shape, '-') - 2))
+            || '-'
+            || UPPER(SUBSTR(shape, INSTR(shape, '-') + 1, 1))
+            || LOWER(SUBSTR(shape, INSTR(shape, '-') + 2))
+        WHERE shape LIKE '%-%'
+        AND shape IS NOT NULL
+    """)
+
+    # Fix 9: Shape typo corrections
+    print("  Fixing shape typos...")
+    shape_typo_map = {
+        'Ballk': 'Ball',
+        'Dumbell': 'Dumbbell',
+        'Frieball': 'Fireball',
+        'Triange': 'Triangle',
+        'Ovois': 'Ovoid',
+        'Eliptic': 'Elliptic',
+        'Astrix': 'Asterisk',
+        'Blim': 'Blimp',
+        'Done': 'Dome',
+    }
+    fixed_typos = 0
+    for old, new in shape_typo_map.items():
+        cur.execute("UPDATE sighting SET shape = ? WHERE shape = ?", (new, old))
+        fixed_typos += cur.rowcount
+    print(f"    Fixed {fixed_typos:,} shape typos")
+
+    # Fix 10: Remove junk shape values
+    print("  Removing junk shape values...")
+    junk_shapes = ['1', '2', 'ps']
+    placeholders = ','.join('?' * len(junk_shapes))
+    cur.execute(
+        f"UPDATE sighting SET shape = NULL WHERE shape IN ({placeholders})",
+        junk_shapes
+    )
+    print(f"    Nulled {cur.rowcount:,} junk shapes")
+
+    # Fix 11: Uppercase Hynek classification codes
+    print("  Normalizing Hynek codes...")
+    cur.execute("""
+        UPDATE sighting SET hynek = UPPER(hynek)
+        WHERE hynek IS NOT NULL
+        AND hynek != UPPER(hynek)
+    """)
+    print(f"    Uppercased {cur.rowcount:,} Hynek codes")
+
+    # Fix 12: Uppercase Vallee classification codes
+    print("  Normalizing Vallee codes...")
+    cur.execute("""
+        UPDATE sighting SET vallee = UPPER(vallee)
+        WHERE vallee IS NOT NULL
+        AND vallee != UPPER(vallee)
+    """)
+    print(f"    Uppercased {cur.rowcount:,} Vallee codes")
+
+    # Fix 13: Null out [MISSING DATA] placeholder descriptions
+    print("  Cleaning placeholder descriptions...")
+    cur.execute("""
+        UPDATE sighting SET description = NULL
+        WHERE description = '[MISSING DATA]'
+    """)
+    print(f"    Nulled {cur.rowcount:,} [MISSING DATA] descriptions")
+
+    # Fix 14: Strip MUFON razor boilerplate from descriptions
+    print("  Stripping MUFON razor boilerplate...")
+    cur.execute("""
+        UPDATE sighting SET description =
+            TRIM(SUBSTR(description, INSTR(description, 'Investigator Notes:') + 19))
+        WHERE source_db_id = (SELECT id FROM source_database WHERE name='MUFON')
+        AND description LIKE 'Submitted by razor via e-mail%Investigator Notes:%'
+        AND LENGTH(TRIM(SUBSTR(description, INSTR(description, 'Investigator Notes:') + 19))) > 0
+    """)
+    print(f"    Stripped {cur.rowcount:,} razor boilerplate descriptions")
+
+    # Fix 14b: Null empty descriptions left over from boilerplate stripping
+    cur.execute("""
+        UPDATE sighting SET description = NULL
+        WHERE description IS NOT NULL AND TRIM(description) = ''
+    """)
+    # Fix 14c: Null boilerplate-only descriptions (no Investigator Notes content)
+    cur.execute("""
+        UPDATE sighting SET description = NULL
+        WHERE source_db_id = (SELECT id FROM source_database WHERE name='MUFON')
+        AND description LIKE 'Submitted by razor via e-mail%'
+        AND (description NOT LIKE '%Investigator Notes:%'
+             OR LENGTH(TRIM(SUBSTR(description, INSTR(description, 'Investigator Notes:') + 19))) = 0)
     """)
 
     conn.commit()
