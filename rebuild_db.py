@@ -137,17 +137,17 @@ def apply_data_fixes():
         AND date_event_raw LIKE '%\n%'
     """)
 
-    # Fix 5: MUFON date_event newline — save time to time_raw, strip \n from date_event
-    print("  Fixing MUFON date_event newline (saving time to time_raw)...")
-    cur.execute("""
+    # Fix 5: MUFON date_event literal \n (0x5C6E) — save time to time_raw, strip
+    print("  Fixing MUFON date_event literal backslash-n...")
+    cur.execute(r"""
         UPDATE sighting SET
-            time_raw = SUBSTR(date_event, INSTR(date_event, CHAR(10)) + 1),
-            date_event = SUBSTR(date_event, 1, INSTR(date_event, CHAR(10)) - 1)
+            time_raw = SUBSTR(date_event, INSTR(date_event, '\n') + 2),
+            date_event = SUBSTR(date_event, 1, INSTR(date_event, '\n') - 1)
         WHERE source_db_id = (SELECT id FROM source_database WHERE name='MUFON')
-        AND INSTR(date_event, CHAR(10)) > 0
+        AND date_event LIKE '%\n%'
         AND time_raw IS NULL
     """)
-    print(f"    Fixed {cur.rowcount:,} MUFON date_event newlines")
+    print(f"    Fixed {cur.rowcount:,} MUFON date_event literal backslash-n")
 
     # Fix 6: Null out MUFON year-0000 dates (invalid year from empty source field)
     print("  Nulling MUFON year-0000 dates...")
@@ -165,6 +165,40 @@ def apply_data_fixes():
         WHERE date_event LIKE '-%'
     """)
     print(f"    Nulled {cur.rowcount:,} negative-year dates")
+
+    # Fix 7b: Truncate month-00 dates to year only (e.g. 1957-00-00 → 1957)
+    print("  Truncating month-00 dates...")
+    cur.execute("""
+        UPDATE sighting SET date_event = SUBSTR(date_event, 1, 4)
+        WHERE date_event IS NOT NULL
+        AND LENGTH(date_event) >= 7
+        AND SUBSTR(date_event, 6, 2) = '00'
+    """)
+    print(f"    Truncated {cur.rowcount:,} month-00 dates")
+
+    # Fix 7c: Truncate day-00 dates to YYYY-MM (e.g. 1985-07-00 → 1985-07)
+    print("  Truncating day-00 dates...")
+    cur.execute("""
+        UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+        WHERE date_event IS NOT NULL
+        AND LENGTH(date_event) >= 10
+        AND SUBSTR(date_event, 9, 2) = '00'
+    """)
+    print(f"    Truncated {cur.rowcount:,} day-00 dates")
+
+    # Fix 7d: Truncate impossible calendar dates (Feb 30+, 30-day month with 31)
+    print("  Truncating impossible calendar dates...")
+    cur.execute("""
+        UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+        WHERE date_event IS NOT NULL
+        AND LENGTH(date_event) >= 10
+        AND (
+            (SUBSTR(date_event, 6, 2) = '02' AND CAST(SUBSTR(date_event, 9, 2) AS INTEGER) > 29)
+            OR
+            (SUBSTR(date_event, 6, 2) IN ('04','06','09','11') AND SUBSTR(date_event, 9, 2) = '31')
+        )
+    """)
+    print(f"    Truncated {cur.rowcount:,} impossible dates")
 
     # Fix 8: Shape normalization — titlecase for simple words (not hyphenated)
     print("  Normalizing shape case...")

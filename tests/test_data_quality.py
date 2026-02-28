@@ -7,7 +7,8 @@ behavior of new data-fix functions to be added to rebuild_db.py.
 Issues found:
   1. Shape: 24 case-duplicate groups (fireball/Fireball/FireBall), typos (Ballk, Dumbell),
      junk values (ps, 1, 2), lowercase variants matching titlecase (light→Light)
-  2. Date: MUFON \n in date_event (not just date_event_raw), year 0000, negative years
+  2. Date: MUFON literal \n in date_event, year 0000, negative years,
+     day-00 (3,898 MUFON), month-00 (551 MUFON), impossible dates (Feb 30, Apr 31)
   3. Hynek: case duplicates (nl→NL, No→NO, ph→PH)
   4. Vallee: case duplicates (fb1→FB1, ma1→MA1)
   5. Description: [MISSING DATA] placeholders, residual MUFON razor boilerplate
@@ -886,6 +887,479 @@ class TestMufonBoilerplateInDescription:
         # Should be either NULL or empty (the boilerplate-only was not cleaned by step 1
         # because the content after Investigator Notes: was empty/whitespace)
         assert result is None or result.strip() == ''
+
+
+# ============================================================
+# MUFON Literal \n in date_event
+# ============================================================
+
+class TestMufonLiteralBackslashN:
+    r"""Test Fix: MUFON dates with literal \n (0x5C 0x6E) between date and time."""
+
+    def test_literal_backslash_n_stripped(self, clean_db):
+        r"""'2020-01-15\n3:00PM' (literal \n) → '2020-01-15', time_raw='3:00PM'."""
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        # Literal backslash-n, NOT a real newline
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '2020-01-15\\n3:00PM', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        # Fix: strip literal \n and everything after, save time to time_raw
+        cur.execute(r"""
+            UPDATE sighting SET
+                time_raw = SUBSTR(date_event, INSTR(date_event, '\n') + 2),
+                date_event = SUBSTR(date_event, 1, INSTR(date_event, '\n') - 1)
+            WHERE source_db_id = 1
+            AND date_event LIKE '%\n%'
+            AND time_raw IS NULL
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event, time_raw FROM sighting WHERE id = ?", (sid,))
+        row = cur.fetchone()
+        assert row[0] == '2020-01-15'
+        assert row[1] == '3:00PM'
+
+    def test_midnight_time_preserved(self, clean_db):
+        r"""'1985-07-00\n12:00AM' → date='1985-07-00', time_raw='12:00AM'."""
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '1985-07-00\\n12:00AM', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        cur.execute(r"""
+            UPDATE sighting SET
+                time_raw = SUBSTR(date_event, INSTR(date_event, '\n') + 2),
+                date_event = SUBSTR(date_event, 1, INSTR(date_event, '\n') - 1)
+            WHERE source_db_id = 1
+            AND date_event LIKE '%\n%'
+            AND time_raw IS NULL
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event, time_raw FROM sighting WHERE id = ?", (sid,))
+        row = cur.fetchone()
+        assert row[0] == '1985-07-00'
+        assert row[1] == '12:00AM'
+
+    def test_clean_date_unaffected(self, clean_db):
+        """MUFON dates without literal \\n should not be modified."""
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '2020-01-15', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        cur.execute(r"""
+            UPDATE sighting SET
+                time_raw = SUBSTR(date_event, INSTR(date_event, '\n') + 2),
+                date_event = SUBSTR(date_event, 1, INSTR(date_event, '\n') - 1)
+            WHERE source_db_id = 1
+            AND date_event LIKE '%\n%'
+            AND time_raw IS NULL
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event, time_raw FROM sighting WHERE id = ?", (sid,))
+        row = cur.fetchone()
+        assert row[0] == '2020-01-15'
+        assert row[1] is None
+
+    def test_non_mufon_unaffected(self, clean_db):
+        """Other sources with literal \\n should not be modified."""
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (2, '2020-01-15\\n10:00PM', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        cur.execute(r"""
+            UPDATE sighting SET
+                time_raw = SUBSTR(date_event, INSTR(date_event, '\n') + 2),
+                date_event = SUBSTR(date_event, 1, INSTR(date_event, '\n') - 1)
+            WHERE source_db_id = 1
+            AND date_event LIKE '%\n%'
+            AND time_raw IS NULL
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event FROM sighting WHERE id = ?", (sid,))
+        assert cur.fetchone()[0] == '2020-01-15\\n10:00PM'
+
+    def test_existing_time_raw_not_overwritten(self, clean_db):
+        """If time_raw already set, don't overwrite it."""
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, time_raw, location_id, description) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (1, '2020-01-15\\n3:00PM', '3:00PM', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        cur.execute(r"""
+            UPDATE sighting SET
+                time_raw = SUBSTR(date_event, INSTR(date_event, '\n') + 2),
+                date_event = SUBSTR(date_event, 1, INSTR(date_event, '\n') - 1)
+            WHERE source_db_id = 1
+            AND date_event LIKE '%\n%'
+            AND time_raw IS NULL
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event, time_raw FROM sighting WHERE id = ?", (sid,))
+        row = cur.fetchone()
+        # time_raw was already set, so the WHERE clause excludes this row
+        assert row[0] == '2020-01-15\\n3:00PM'
+        assert row[1] == '3:00PM'
+
+
+# ============================================================
+# Date Validation: Day-00, Month-00, Impossible Dates
+# ============================================================
+
+class TestDateDay00:
+    """Test Fix: MUFON dates with day 00 (e.g. 1985-07-00) → truncate to YYYY-MM."""
+
+    def test_day_00_truncated(self, clean_db):
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '1985-07-00', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 10
+            AND SUBSTR(date_event, 9, 2) = '00'
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event FROM sighting WHERE id = ?", (sid,))
+        assert cur.fetchone()[0] == '1985-07'
+
+    def test_valid_day_untouched(self, clean_db):
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '1985-07-15', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 10
+            AND SUBSTR(date_event, 9, 2) = '00'
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event FROM sighting WHERE id = ?", (sid,))
+        assert cur.fetchone()[0] == '1985-07-15'
+
+    def test_day_01_untouched(self, clean_db):
+        """Day 01 is valid and should not be affected."""
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '2020-01-01', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 10
+            AND SUBSTR(date_event, 9, 2) = '00'
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event FROM sighting WHERE id = ?", (sid,))
+        assert cur.fetchone()[0] == '2020-01-01'
+
+
+class TestDateMonth00:
+    """Test Fix: Dates with month 00 (e.g. 1957-00-00) → truncate to YYYY."""
+
+    def test_month_00_truncated(self, clean_db):
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '1957-00-00', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        # Month 00 fix: truncate to year only
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 4)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 7
+            AND SUBSTR(date_event, 6, 2) = '00'
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event FROM sighting WHERE id = ?", (sid,))
+        assert cur.fetchone()[0] == '1957'
+
+    def test_valid_month_untouched(self, clean_db):
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '1957-06-15', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 4)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 7
+            AND SUBSTR(date_event, 6, 2) = '00'
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event FROM sighting WHERE id = ?", (sid,))
+        assert cur.fetchone()[0] == '1957-06-15'
+
+    def test_month_00_day_00_combined(self, clean_db):
+        """Both month and day are 00 — month fix runs first, truncates to year."""
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '1957-00-00', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        # Month fix first (truncates to YYYY), then day fix won't match
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 4)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 7
+            AND SUBSTR(date_event, 6, 2) = '00'
+        """)
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 10
+            AND SUBSTR(date_event, 9, 2) = '00'
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event FROM sighting WHERE id = ?", (sid,))
+        assert cur.fetchone()[0] == '1957'
+
+
+class TestImpossibleDates:
+    """Test Fix: Impossible calendar dates (Feb 30, Apr 31, etc.) → truncate to YYYY-MM."""
+
+    @pytest.mark.parametrize("date_event,expected", [
+        ("2020-02-30", "2020-02"),  # Feb 30
+        ("2020-02-31", "2020-02"),  # Feb 31
+        ("2020-04-31", "2020-04"),  # Apr 31
+        ("2020-06-31", "2020-06"),  # Jun 31
+        ("2020-09-31", "2020-09"),  # Sep 31
+        ("2020-11-31", "2020-11"),  # Nov 31
+    ])
+    def test_impossible_date_truncated(self, clean_db, date_event, expected):
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, date_event, loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        # Fix impossible dates: Feb day>29, 30-day months day>30
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 10
+            AND (
+                (SUBSTR(date_event, 6, 2) = '02' AND CAST(SUBSTR(date_event, 9, 2) AS INTEGER) > 29)
+                OR
+                (SUBSTR(date_event, 6, 2) IN ('04','06','09','11') AND SUBSTR(date_event, 9, 2) = '31')
+            )
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event FROM sighting WHERE id = ?", (sid,))
+        assert cur.fetchone()[0] == expected
+
+    @pytest.mark.parametrize("date_event", [
+        "2020-02-28",  # Valid Feb
+        "2020-02-29",  # Leap year Feb 29
+        "2020-04-30",  # Valid Apr 30
+        "2020-01-31",  # Valid Jan 31
+        "2020-03-31",  # Valid Mar 31
+    ])
+    def test_valid_date_untouched(self, clean_db, date_event):
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, date_event, loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 10
+            AND (
+                (SUBSTR(date_event, 6, 2) = '02' AND CAST(SUBSTR(date_event, 9, 2) AS INTEGER) > 29)
+                OR
+                (SUBSTR(date_event, 6, 2) IN ('04','06','09','11') AND SUBSTR(date_event, 9, 2) = '31')
+            )
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event FROM sighting WHERE id = ?", (sid,))
+        assert cur.fetchone()[0] == date_event
+
+
+class TestDateFixOrdering:
+    """Test that date fixes chain correctly: literal \\n → month-00 → day-00 → impossible."""
+
+    def test_literal_backslash_n_then_day00(self, clean_db):
+        r"""'1985-07-00\n12:00AM' → strip \n → '1985-07-00' → truncate → '1985-07'."""
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '1985-07-00\\n12:00AM', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        # Step 1: strip literal \n
+        cur.execute(r"""
+            UPDATE sighting SET
+                time_raw = SUBSTR(date_event, INSTR(date_event, '\n') + 2),
+                date_event = SUBSTR(date_event, 1, INSTR(date_event, '\n') - 1)
+            WHERE source_db_id = 1
+            AND date_event LIKE '%\n%'
+            AND time_raw IS NULL
+        """)
+        # Step 2: month-00 fix
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 4)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 7
+            AND SUBSTR(date_event, 6, 2) = '00'
+        """)
+        # Step 3: day-00 fix
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 10
+            AND SUBSTR(date_event, 9, 2) = '00'
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event, time_raw FROM sighting WHERE id = ?", (sid,))
+        row = cur.fetchone()
+        assert row[0] == '1985-07'
+        assert row[1] == '12:00AM'
+
+    def test_literal_backslash_n_then_month00(self, clean_db):
+        r"""'1957-00-00\n12:00AM' → strip \n → '1957-00-00' → truncate month → '1957'."""
+        cur = clean_db.cursor()
+        cur.execute("INSERT INTO location (raw_text) VALUES ('x')")
+        loc_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO sighting (source_db_id, date_event, location_id, description) "
+            "VALUES (?, ?, ?, ?)",
+            (1, '1957-00-00\\n12:00AM', loc_id, 'test')
+        )
+        sid = cur.lastrowid
+        clean_db.commit()
+
+        # Step 1: strip literal \n
+        cur.execute(r"""
+            UPDATE sighting SET
+                time_raw = SUBSTR(date_event, INSTR(date_event, '\n') + 2),
+                date_event = SUBSTR(date_event, 1, INSTR(date_event, '\n') - 1)
+            WHERE source_db_id = 1
+            AND date_event LIKE '%\n%'
+            AND time_raw IS NULL
+        """)
+        # Step 2: month-00
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 4)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 7
+            AND SUBSTR(date_event, 6, 2) = '00'
+        """)
+        # Step 3: day-00
+        cur.execute("""
+            UPDATE sighting SET date_event = SUBSTR(date_event, 1, 7)
+            WHERE date_event IS NOT NULL
+            AND LENGTH(date_event) >= 10
+            AND SUBSTR(date_event, 9, 2) = '00'
+        """)
+        clean_db.commit()
+
+        cur.execute("SELECT date_event, time_raw FROM sighting WHERE id = ?", (sid,))
+        row = cur.fetchone()
+        assert row[0] == '1957'
+        assert row[1] == '12:00AM'
 
 
 # ============================================================
