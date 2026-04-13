@@ -15,7 +15,7 @@ import sys
 import re
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
-CSV_PATH = os.path.join(os.path.dirname(__file__), "UFOCAT", "ufocat2023.csv")
+CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "UFOCAT", "ufocat2023.csv")
 ENRICHMENT_PATH = os.path.join(os.path.dirname(__file__), "ufocat_enrichment.jsonl")
 
 BATCH_SIZE = 5000

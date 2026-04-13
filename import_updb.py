@@ -10,7 +10,7 @@ import os
 import re
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
-CSV_PATH = os.path.join(os.path.dirname(__file__), "UPDB.app", "phenomenAInon_UPDB.csv")
+CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "UPDB.app", "phenomenAInon_UPDB.csv")
 
 BATCH_SIZE = 10000
 

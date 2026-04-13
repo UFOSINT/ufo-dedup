@@ -332,6 +332,7 @@ def main():
     parser.add_argument('--skip-geocode', action='store_true', help='Skip geocoding step')
     parser.add_argument('--skip-explorer', action='store_true', help='Skip explorer DB copy')
     parser.add_argument('--skip-sentiment', action='store_true', help='Skip sentiment analysis step')
+    parser.add_argument('--skip-analysis', action='store_true', help='Skip derived analysis step')
     args = parser.parse_args()
 
     overall_t0 = time.time()
@@ -390,8 +391,15 @@ def main():
     else:
         print("\n  Skipping sentiment analysis (--skip-sentiment)")
 
+    if not args.skip_analysis:
+        step(12, "Derived analysis (shape, quality, hoax, etc.)")
+        import analyze
+        analyze.run_analysis()
+    else:
+        print("\n  Skipping derived analysis (--skip-analysis)")
+
     if not args.skip_explorer:
-        step(12, "Copy to explorer")
+        step(13, "Copy to explorer")
         copy_to_explorer()
     else:
         print("\n  Skipping explorer copy (--skip-explorer)")
@@ -441,6 +449,33 @@ def main():
     cur.execute("SELECT COUNT(*) FROM sentiment_analysis")
     sent_count = cur.fetchone()[0]
     print(f"  Sentiment records: {sent_count:,}")
+
+    # Check derived analysis results
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE quality_score IS NOT NULL")
+    scored = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE quality_score >= 60")
+    high_q = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(DISTINCT standardized_shape) FROM sighting WHERE standardized_shape IS NOT NULL")
+    shape_count = cur.fetchone()[0]
+    print(f"  Derived analysis: {scored:,} scored (>=60: {high_q:,}, {shape_count} standardized shapes)")
+
+    # Public dataset coverage
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE lat IS NOT NULL AND lng IS NOT NULL")
+    public_coords = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE sighting_datetime IS NOT NULL")
+    public_dt = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE has_description = 1")
+    public_desc = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE has_media = 1")
+    public_media = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE has_movement_mentioned = 1")
+    public_mov = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE quality_score <= 15 AND date_event IS NULL")
+    date_capped = cur.fetchone()[0]
+    print(f"  Public fields:    coords={public_coords:,}, datetime={public_dt:,}, "
+          f"has_description={public_desc:,}, has_media={public_media:,}")
+    print(f"  Movement/dates:   has_movement={public_mov:,}, "
+          f"date-capped (unknown date): {date_capped:,}")
 
     conn.close()
 

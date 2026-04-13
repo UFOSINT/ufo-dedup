@@ -46,7 +46,7 @@ Only UFOReportCtr is skipped at import time. Other overlaps are handled by the d
 
 ### Core Tables
 
-**`sighting`** (614,505 rows, 42 columns) — The main table. Each row is one reported sighting event.
+**`sighting`** (614,505 rows, 69 columns) — The main table. Each row is one reported sighting event.
 
 - **Provenance**: `source_db_id`, `source_record_id`, `origin_id`, `origin_record_id`
 - **Dates**: `date_event` (ISO 8601), `date_event_raw`, `date_end`, `time_raw`, `timezone`, `date_reported`, `date_posted`
@@ -58,6 +58,12 @@ Only UFOReportCtr is skipped at import time. Other overlaps are handled by the d
 - **Resolution**: `explanation`, `characteristics`
 - **Context**: `weather`, `terrain`, `source_ref`, `page_volume`, `notes`
 - **Preservation**: `raw_json` — complete original record as JSON
+- **Derived Analysis** (populated by `analyze.py`): `standardized_shape`, `primary_color`, `sentiment_score`, `dominant_emotion`, `quality_score`, `richness_score`, `hoax_likelihood`, `duration_bucket`, `movement_type`, `has_movement_mentioned`, `movement_categories` (JSON), `topic_id`
+- **Public Dataset Fields** (populated by `analyze.py`): `lat`, `lng`, `sighting_datetime`, `has_description`, `has_media`
+- **Emotion Classification** (populated by `emotions.py`): `emotion_28_dominant`, `emotion_28_group`, `emotion_7_dominant`, `vader_compound`, `roberta_sentiment`, `emotion_7_surprise`, `emotion_7_fear`, `emotion_7_neutral`, `emotion_7_anger`, `emotion_7_disgust`, `emotion_7_sadness`, `emotion_7_joy`
+
+**`sighting_analysis`** (614,505 rows) — Richer JSON-encoded derived fields, one row per sighting:
+- `behavior_tags` (JSON array), `color_list` (JSON array), `emotion_scores` (JSON object), `hoax_flags` (JSON array), `raw_shape_matched_via`
 
 **`location`** — Deduplicated locations with `raw_text`, `city`, `county`, `state`, `country`, `region`, `latitude`, `longitude`.
 
@@ -245,25 +251,94 @@ Pairs with no description on either side receive score = 0.0 (these are still fl
 - **No transitive closure**. If A↔B and B↔C are both flagged, A↔C is NOT automatically inferred. Each pair is independent.
 - **Multiple witnesses are preserved**. If the same event has genuinely separate witness reports in different sources, both records remain. The similarity score helps distinguish true duplicates (high score) from independent reports of the same event (low score, different descriptions).
 
-## UFO Explorer GUI
+## Derived Analysis Pipeline
 
-A self-contained web GUI in `ufo-explorer/`.
+After import, enrichment, geocoding, and deduplication, `analyze.py` runs a 9-step derived-analysis pipeline that produces legally-safe, non-copyrighted features for the public site. The pipeline is defined as an ordered list of `(name, function, label)` tuples in `ANALYSIS_STEPS` — adding a new step (e.g. a future offline LLM enrichment) is one line.
 
-### Features
+### Steps
 
-- **Interactive Map** — Leaflet.js with marker clustering, color-coded by source, bbox-based lazy loading
-- **Timeline** — Chart.js stacked bar chart by year, click to drill down to monthly view
-- **Search** — Full-text search across descriptions, filtered by shape/source/Hynek/date range
-- **Detail View** — Full sighting record with mini-map, classification badges, raw JSON toggle
+| # | Step | Output Columns | Description |
+|---|------|----------------|-------------|
+| 1 | Shape normalization | `standardized_shape` | Fuzzy-matches raw `shape` against 25 canonical values via rapidfuzz |
+| 2 | Movement classification | `movement_type`, `has_movement_mentioned`, `movement_categories` (JSON), `behavior_tags` (JSON) | Regex-based taxonomy of 10 movement categories + 14 behavior tags |
+| 3 | Color extraction | `primary_color`, `color_list` (JSON) | Word-boundary regex against a 21-color whitelist |
+| 4 | Sentiment derivation | `sentiment_score`, `dominant_emotion`, `emotion_scores` (JSON) | Derived from the `sentiment_analysis` table (VADER + NRC) |
+| 5 | Duration bucketing | `duration_bucket` | Maps `duration_seconds` to instant/seconds/minutes/hours/days |
+| 6 | Public field derivation | `lat`, `lng`, `sighting_datetime`, `has_description`, `has_media` | Denormalizes coords, combines date+time, detects media mentions |
+| 7 | Quality scoring | `quality_score` (0-100), `richness_score` | Weighted heuristic: description length, media, witnesses, movement, structured fields, coords. Unknown-date rows capped at 15 (relaxed to 35 for rich rows). |
+| 8 | Hoax flagging | `hoax_likelihood` (0-1), `hoax_flags` (JSON) | Rule-based: short text, generic phrasing, duplicate phrasing, dramatic + no specifics, all-caps |
+| 9 | Topic modeling | `topic_id` | STUB — reserved for v0.9 |
 
-### Running
+### Emotion Classification (`emotions.py`)
+
+Runs three transformer models + VADER on GPU (CUDA) for every sighting with narrative text (502,985 rows, 81.9% coverage):
+
+| Model | HuggingFace ID | Output |
+|-------|----------------|--------|
+| GoEmotions 28-class | `SamLowe/roberta-base-go_emotions` | `emotion_28_dominant`, `emotion_28_group` |
+| 7-class RoBERTa | `j-hartmann/emotion-english-distilroberta-base` | `emotion_7_dominant`, 7 probability columns |
+| RoBERTa sentiment | `cardiffnlp/twitter-roberta-base-sentiment-latest` | `roberta_sentiment` (-1 to +1) |
+| VADER | vaderSentiment | `vader_compound` (-1 to +1) |
+
+### Quality Score Formula (v0.8.3b)
+
+```
+description length (0 / <50 / <200 / 200+)    0 / 5 / 15 / 25
+has_media = 1                                 +15
+num_witnesses tier (0 / 1 / 2 / 3+)           0 / 5 / 10 / 15
+has_movement_mentioned                        +10  (+5 if 2+ categories)
+9 structured fields x 3 pts each              max 27
+coords present                                +5
+specificity bonus (time/direction/altitude)    +5
+cap: min(100, score)
+unknown-date cap: min(score, 15)  [relaxed to 35 if features>=8 + has_description]
+```
+
+### Public Export
+
+`export_public.py` produces a clean, text-free SQLite (`ufo_public.db`) from the private analysis DB:
 
 ```bash
-cd ufo-explorer
-pip install flask
-python app.py
-# Open http://localhost:5000
+python export_public.py
+# Source: 1.7 GB -> Public: 507 MB (71.6% reclaimed)
 ```
+
+The export uses an **allowlist** (`PUBLIC_TABLES`): only explicitly listed tables survive. Raw text columns (`description`, `summary`, `notes`, `raw_json`) are dropped. Private tables (`sentiment_analysis`, `duplicate_candidate`, `reference`, `sighting_reference`, `attachment`) are dropped. The private DB is never modified.
+
+## Rebuilding from Scratch
+
+```bash
+# 1. Install dependencies
+pip install -r requirements-etl.txt
+
+# 2. Download GeoNames gazetteer (one-time, ~10 MB)
+python geocode.py --download
+
+# 3. Full rebuild (~25 min: import + geocode + dedup + sentiment + analyze)
+python rebuild_db.py
+
+# 4. Emotion classification (separate step, requires GPU + transformers)
+pip install torch transformers
+python emotions.py --db ufo_unified.db
+
+# 5. Export public DB (strips raw text + private tables)
+python export_public.py --source ufo_unified.db --target ../data/output/ufo_public.db
+```
+
+Source data must be at `../data/raw/` relative to this directory (nuforc.csv, mufon.csv, UFOCAT/ufocat2023.csv, UPDB.app/phenomenAInon_UPDB.csv, UFO-search/majestic.json).
+
+## Tests
+
+```bash
+pip install pytest
+pytest tests/ -v   # 369 tests
+```
+
+Test suite covers: schema creation, ETL parsers, data quality fixes, deduplication, shape normalization, movement classification, color extraction, sentiment derivation, quality scoring, unknown-date capping, hoax flagging, duration bucketing, public-field derivation, idempotency.
+
+## UFO Explorer GUI
+
+> **Note**: The production explorer has moved to `ufosint-explorer/` (separate repo). The `ufo-explorer/` directory in this repo is a legacy prototype and is no longer maintained.
 
 ## File Inventory
 
@@ -283,19 +358,24 @@ python app.py
 | `import_updb.py` | UPDB CSV | 65,016 | 1,820,741 (MUFON/NUFORC) |
 | `import_geldreich.py` | UFO-search JSON | 54,751 | — |
 
-### Analysis & Tools
+### Analysis & Derived Features
 | File | Description |
 |------|-------------|
+| `analyze.py` | **Derived-insight pipeline** — 9-step plug-in-ready pipeline (`ANALYSIS_STEPS` registry). Produces standardized shapes, movement/behavior tags, color extraction, quality scores, hoax flags, sentiment derivation, duration bucketing, and public-dataset field denormalization. |
+| `emotions.py` | **Transformer emotion classification** — GoEmotions 28-class, 7-class RoBERTa, RoBERTa sentiment, and VADER. GPU-accelerated (CUDA), batched, idempotent. Classifies 502,985 sightings with text. |
+| `sentiment.py` | VADER + NRCLex sentiment/emotion analysis (legacy, replaced by `emotions.py` for production) |
+| `export_public.py` | **Clean public export** — copies the private DB, strips raw text columns (`description`, `summary`, `notes`, `raw_json`) and private-only tables, VACUUMs. Produces `ufo_public.db` (507 MB) from `ufo_unified.db` (1.7 GB). Allowlist-driven: only tables in `PUBLIC_TABLES` survive. |
 | `enrich.py` | Transfers UFOCAT Hynek/Vallee metadata to NUFORC records |
 | `dedup.py` | Three-tier deduplication engine |
+| `geocode.py` | Offline geocoding via GeoNames gazetteer (cities15000.txt, auto-downloaded) |
 | `fix_coords.py` | Coordinate validation and auto-repair |
 | `db_summary.py` | Database statistics report |
 
-### GUI
+### Tests
 | File | Description |
 |------|-------------|
-| `ufo-explorer/app.py` | Flask API server |
-| `ufo-explorer/static/index.html` | Single-page app shell |
-| `ufo-explorer/static/app.js` | Map/Timeline/Search logic |
-| `ufo-explorer/static/style.css` | Dark theme styling |
-| `ufo-explorer/ufo_unified.db` | Database copy for GUI |
+| `tests/test_analyze.py` | 39 tests for the derived-analysis pipeline |
+| `tests/test_data_quality.py` | Data quality fix tests (shapes, dates, Hynek, Vallee) |
+| `tests/test_dedup.py` | Deduplication engine tests |
+| `tests/test_etl.py` | ETL parser and schema tests |
+| `tests/conftest.py` | Shared fixtures: in-memory DB, `insert_test_sighting()` helper |

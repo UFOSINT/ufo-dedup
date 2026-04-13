@@ -136,7 +136,42 @@ def create_schema(db_path=DB_PATH):
         -- METADATA
         notes               TEXT,
         raw_json            TEXT,       -- JSON blob of all original fields
-        created_at          TEXT DEFAULT (datetime('now'))
+        created_at          TEXT DEFAULT (datetime('now')),
+
+        -- DERIVED ANALYSIS (populated by analyze.py)
+        standardized_shape  TEXT,       -- canonical shape from fuzzy matching
+        primary_color       TEXT,       -- first/dominant color from extract_colors
+        sentiment_score     REAL,       -- copied from sentiment_analysis.vader_compound
+        dominant_emotion    TEXT,       -- argmax of emo_* columns
+        quality_score       INTEGER,    -- 0-100 richness heuristic
+        richness_score      INTEGER,    -- count of filled meaningful fields
+        hoax_likelihood     REAL,       -- 0.0-1.0 rule-based
+        topic_id            INTEGER,    -- reserved for v0.9 topic modeling
+        duration_bucket     TEXT,       -- instant|seconds|minutes|hours|days
+        movement_type       TEXT,       -- hover|fast|erratic|linear|stationary|unknown
+        has_movement_mentioned INTEGER, -- 0 or 1: narrative mentions structured movement
+        movement_categories TEXT,       -- JSON array of movement_category names
+
+        -- PUBLIC DATASET FIELDS (safe to expose after raw text is dropped)
+        lat                 REAL,       -- denormalized from location.latitude
+        lng                 REAL,       -- denormalized from location.longitude
+        sighting_datetime   TEXT,       -- ISO 8601 combined date + time (fallback: date_event)
+        has_description     INTEGER,    -- 0 or 1: description/summary text existed in raw
+        has_media           INTEGER,    -- 0 or 1: photo/video mentioned or attachment row exists
+
+        -- v0.11 EMOTION CLASSIFICATION (populated by emotions.py)
+        emotion_28_dominant TEXT,       -- GoEmotions 28-class label
+        emotion_28_group    TEXT,       -- positive|negative|ambiguous|neutral
+        emotion_7_dominant  TEXT,       -- 7-class RoBERTa label
+        vader_compound      REAL,       -- VADER compound score, -1.0 to +1.0
+        roberta_sentiment   REAL,       -- RoBERTa-large sentiment, -1.0 to +1.0
+        emotion_7_surprise  REAL,       -- 7-class softmax probability
+        emotion_7_fear      REAL,
+        emotion_7_neutral   REAL,
+        emotion_7_anger     REAL,
+        emotion_7_disgust   REAL,
+        emotion_7_sadness   REAL,
+        emotion_7_joy       REAL
     )
     """)
 
@@ -191,6 +226,23 @@ def create_schema(db_path=DB_PATH):
     # SENTIMENT ANALYSIS
     # ==========================================
 
+    # ==========================================
+    # DERIVED ANALYSIS (richer JSON-y fields)
+    # ==========================================
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS sighting_analysis (
+        id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+        sighting_id              INTEGER NOT NULL UNIQUE REFERENCES sighting(id),
+        behavior_tags            TEXT,   -- JSON array
+        color_list               TEXT,   -- JSON array
+        emotion_scores           TEXT,   -- JSON object (normalized emotion floats)
+        hoax_flags               TEXT,   -- JSON array of flag names
+        raw_shape_matched_via    TEXT,   -- exact|substring|fuzzy|unmatched
+        created_at               TEXT DEFAULT (datetime('now'))
+    )
+    """)
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS sentiment_analysis (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -233,6 +285,20 @@ def create_schema(db_path=DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_sighting_source_record ON sighting(source_db_id, source_record_id)",
         "CREATE INDEX IF NOT EXISTS idx_sentiment_sighting ON sentiment_analysis(sighting_id)",
         "CREATE INDEX IF NOT EXISTS idx_sentiment_compound ON sentiment_analysis(vader_compound)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_quality ON sighting(quality_score)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_hoax ON sighting(hoax_likelihood)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_std_shape ON sighting(standardized_shape)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_topic ON sighting(topic_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_dom_emotion ON sighting(dominant_emotion)",
+        "CREATE INDEX IF NOT EXISTS idx_analysis_sighting ON sighting_analysis(sighting_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_latlng ON sighting(lat, lng)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_datetime ON sighting(sighting_datetime)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_has_desc ON sighting(has_description)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_has_media ON sighting(has_media)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_has_movement ON sighting(has_movement_mentioned)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_emo28 ON sighting(emotion_28_dominant)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_emo28g ON sighting(emotion_28_group)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_emo7 ON sighting(emotion_7_dominant)",
     ]
     for idx_sql in indexes:
         cur.execute(idx_sql)
