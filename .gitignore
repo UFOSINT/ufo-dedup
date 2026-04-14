@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Data files (too large for git)
+# Data files (too large for git) — README.md files are tracked anywhere
 *.db
 *.db-wal
 *.db-shm
@@ -13,28 +13,16 @@ __pycache__/
 *.accdb
 *.zip
 *.gz
+*.parquet
 
 # Environment
 .env
 
-# The web app has its own repo (UFOSINT/ufo-explorer)
+# The legacy in-repo Flask GUI prototype (replaced by ufosint-explorer)
 ufo-explorer/
 
-# Source data directories
-UFOCAT/
-NUFORC/
-MUFON/
-UPDB.app/
-Geldreich/
-UAP-Check/
-
-# GeoNames gazetteer data (downloaded at build time)
+# GeoNames gazetteer data (downloaded at build time, ~10 MB extracted)
 geodata/
-
-# Shared data root lives at ../data (UFOSINT/data/).
-# Covers both a real folder and a symlink named `data` inside this repo.
-/data
-/data/
 
 # Build / run logs
 *.log

@@ -307,8 +307,37 @@ The export uses an **allowlist** (`PUBLIC_TABLES`): only explicitly listed table
 
 ## Rebuilding from Scratch
 
+### Prerequisites
+
+1. **Python 3.10+** (tested on 3.12) and `pip`.
+2. **Source data files.** None are committed — see [`data/raw/README.md`](data/raw/README.md) for per-source acquisition notes (where to get NUFORC, MUFON, UFOCAT, UPDB, UFO-search). Files go either in `./data/raw/` (set `UFOSINT_DATA_DIR=$(pwd)/data/raw`) or in `../data/raw/` (the parent-directory layout this repo defaults to).
+3. **For emotion classification (optional, v0.11+)**: an NVIDIA GPU with ≥6 GB VRAM, CUDA-enabled PyTorch, and the `transformers` library. CPU inference works but is ~50× slower.
+
+### Quick verification before you start
+
 ```bash
-# 1. Install dependencies
+# Confirm all 5 source files are reachable at the expected paths
+python -c "
+import os
+from import_nuforc    import CSV_PATH as P1
+from import_mufon     import CSV_PATH as P2
+from import_ufocat    import CSV_PATH as P3
+from import_updb      import CSV_PATH as P4
+from import_geldreich import JSON_PATH as P5
+for label, p in [('nuforc', P1), ('mufon', P2), ('ufocat', P3),
+                 ('updb', P4), ('ufo-search', P5)]:
+    ok = 'OK ' if os.path.exists(p) else 'MISS'
+    size = f'{os.path.getsize(p)/1024/1024:>7.1f} MB' if os.path.exists(p) else '       --'
+    print(f'  {ok}  {size}  {os.path.normpath(p)}')
+"
+```
+
+Every line should print `OK` and a non-zero size.
+
+### Full pipeline
+
+```bash
+# 1. Install ETL dependencies
 pip install -r requirements-etl.txt
 
 # 2. Download GeoNames gazetteer (one-time, ~10 MB)
@@ -317,15 +346,31 @@ python geocode.py --download
 # 3. Full rebuild (~25 min: import + geocode + dedup + sentiment + analyze)
 python rebuild_db.py
 
-# 4. Emotion classification (separate step, requires GPU + transformers)
-pip install torch transformers
-python emotions.py --db ufo_unified.db
+# 4. (Optional) Emotion classification — GPU-accelerated transformers
+pip install torch transformers          # ~2 GB download for torch+CUDA
+python emotions.py --db ufo_unified.db  # ~30 min on RTX 4060 Ti
 
-# 5. Export public DB (strips raw text + private tables)
-python export_public.py --source ufo_unified.db --target ../data/output/ufo_public.db
+# 5. Export public DB (strips raw text + private tables, VACUUMs)
+python export_public.py \
+    --source ufo_unified.db \
+    --target ufo_public.db
 ```
 
-Source data must be at `../data/raw/` relative to this directory (nuforc.csv, mufon.csv, UFOCAT/ufocat2023.csv, UPDB.app/phenomenAInon_UPDB.csv, UFO-search/majestic.json).
+### Configuring the source data path
+
+The 5 importers all read `UFOSINT_DATA_DIR` if set, otherwise default to `../data/raw/` (relative to this directory). Override examples:
+
+```bash
+# bash / zsh
+export UFOSINT_DATA_DIR=/path/to/your/data/raw
+python rebuild_db.py
+
+# PowerShell
+$env:UFOSINT_DATA_DIR = "C:\path\to\your\data\raw"
+python rebuild_db.py
+```
+
+For a standalone clone of just `ufo-dedup/`, the simplest setup is to put your data under `ufo-dedup/data/raw/` and set `UFOSINT_DATA_DIR=$(pwd)/data/raw` before running `rebuild_db.py`.
 
 ## Tests
 

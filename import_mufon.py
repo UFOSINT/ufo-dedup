@@ -9,7 +9,11 @@ import os
 import re
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
-CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "mufon.csv")
+DATA_DIR = os.environ.get(
+    "UFOSINT_DATA_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "raw"),
+)
+CSV_PATH = os.path.join(DATA_DIR, "mufon.csv")
 
 BATCH_SIZE = 5000
 

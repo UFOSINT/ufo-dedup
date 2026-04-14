@@ -10,7 +10,11 @@ import re
 import hashlib
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
-JSON_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "UFO-search", "majestic.json")
+DATA_DIR = os.environ.get(
+    "UFOSINT_DATA_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "raw"),
+)
+JSON_PATH = os.path.join(DATA_DIR, "UFO-search", "majestic.json")
 
 BATCH_SIZE = 5000
 
