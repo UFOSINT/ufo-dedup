@@ -2,6 +2,11 @@
 
 A unified SQLite database merging five major UFO/UAP sighting databases into a single, deduplicated repository of **614,505 sighting records** spanning from antiquity to 2026, with **126,730 duplicate candidate pairs** flagged for review.
 
+**For researchers reproducing this work:**
+- 📄 **[`data/raw/README.md`](data/raw/README.md)** — where to obtain each source dataset (NUFORC, MUFON, UFOCAT, UPDB, UFO-search) and how to lay them out
+- 📊 **[`docs/SCHEMA.md`](docs/SCHEMA.md)** — column-by-column reference for `ufo_public.db` with real coverage numbers
+- 🔍 **[`docs/QUERIES.md`](docs/QUERIES.md)** — practical SQL recipes for analysis (every query tested against the live build)
+
 ## Source Databases
 
 | Source | Format | Raw Records | Imported | Skipped | Columns | Description |
