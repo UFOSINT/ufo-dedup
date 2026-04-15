@@ -2,10 +2,16 @@
 
 A unified SQLite database merging five major UFO/UAP sighting databases into a single, deduplicated repository of **614,505 sighting records** spanning from antiquity to 2026, with **126,730 duplicate candidate pairs** flagged for review.
 
-**For researchers reproducing this work:**
-- 📄 **[`data/raw/README.md`](data/raw/README.md)** — where to obtain each source dataset (NUFORC, MUFON, UFOCAT, UPDB, UFO-search) and how to lay them out
+**For researchers reproducing this work**, jump to [`docs/`](docs/) (full index in [`docs/README.md`](docs/README.md)):
+
+- 📦 **[`data/raw/README.md`](data/raw/README.md)** — where to obtain each source dataset (NUFORC, MUFON, UFOCAT, UPDB, UFO-search) and how to lay them out
+- 🛠️ **[`docs/PIPELINE.md`](docs/PIPELINE.md)** — step-by-step rebuild tutorial with expected outputs at each stage
 - 📊 **[`docs/SCHEMA.md`](docs/SCHEMA.md)** — column-by-column reference for `ufo_public.db` with real coverage numbers
-- 🔍 **[`docs/QUERIES.md`](docs/QUERIES.md)** — practical SQL recipes for analysis (every query tested against the live build)
+- 🔍 **[`docs/QUERIES.md`](docs/QUERIES.md)** — ~25 tested SQL recipes for analysis
+- 🧪 **[`docs/METHODOLOGY.md`](docs/METHODOLOGY.md)** — how the algorithms work: dedup, quality score, hoax detection, sentiment models
+- 🔧 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)** — how to add a new source or new analysis step
+- ⚠️ **[`docs/PITFALLS.md`](docs/PITFALLS.md)** — gotchas, silent failures, and surprising-but-intentional behaviors
+- 📜 **[`CHANGELOG.md`](CHANGELOG.md)** — version history for citation
 
 ## Source Databases
 
