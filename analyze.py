@@ -963,6 +963,12 @@ DERIVED_SIGHTING_COLUMNS = [
     "emotion_7_dominant", "vader_compound", "roberta_sentiment",
     "emotion_7_surprise", "emotion_7_fear", "emotion_7_neutral",
     "emotion_7_anger", "emotion_7_disgust", "emotion_7_sadness", "emotion_7_joy",
+    # NRC lexicon word-counts (denormalized from sentiment_analysis by gerb_overlay.py)
+    "nrc_joy", "nrc_fear", "nrc_anger", "nrc_sadness",
+    "nrc_surprise", "nrc_disgust", "nrc_trust", "nrc_anticipation",
+    "nrc_positive", "nrc_negative",
+    # Nuclear proximity (computed by gerb_overlay.py)
+    "distance_to_nearest_nuclear_site_km", "nearest_nuclear_site_name",
 ]
 
 

@@ -95,6 +95,10 @@ PUBLIC_TABLES = {
     "source_collection",
     "source_database",
     "source_origin",
+    # UAP Gerb overlay tables (curated crash/nuclear/facility data)
+    "crash_retrieval",
+    "nuclear_encounter",
+    "facility",
 }
 
 

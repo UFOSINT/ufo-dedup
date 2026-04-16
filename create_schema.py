@@ -159,6 +159,22 @@ def create_schema(db_path=DB_PATH):
         has_description     INTEGER,    -- 0 or 1: description/summary text existed in raw
         has_media           INTEGER,    -- 0 or 1: photo/video mentioned or attachment row exists
 
+        -- NRC LEXICON WORD COUNTS (denormalized from sentiment_analysis)
+        nrc_joy             INTEGER,
+        nrc_fear            INTEGER,
+        nrc_anger           INTEGER,
+        nrc_sadness         INTEGER,
+        nrc_surprise        INTEGER,
+        nrc_disgust         INTEGER,
+        nrc_trust           INTEGER,
+        nrc_anticipation    INTEGER,
+        nrc_positive        INTEGER,
+        nrc_negative        INTEGER,
+
+        -- NUCLEAR PROXIMITY (computed by gerb_overlay.py)
+        distance_to_nearest_nuclear_site_km REAL,
+        nearest_nuclear_site_name TEXT,
+
         -- v0.11 EMOTION CLASSIFICATION (populated by emotions.py)
         emotion_28_dominant TEXT,       -- GoEmotions 28-class label
         emotion_28_group    TEXT,       -- positive|negative|ambiguous|neutral
@@ -172,6 +188,69 @@ def create_schema(db_path=DB_PATH):
         emotion_7_disgust   REAL,
         emotion_7_sadness   REAL,
         emotion_7_joy       REAL
+    )
+    """)
+
+    # ==========================================
+    # UAP GERB OVERLAY TABLES
+    # ==========================================
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS crash_retrieval (
+        id              TEXT PRIMARY KEY,      -- slug e.g. '1947-roswell-crash'
+        page_name       TEXT NOT NULL,
+        year            INTEGER,
+        date_event      TEXT,
+        city            TEXT,
+        region          TEXT,
+        country         TEXT,
+        latitude        REAL,
+        longitude       REAL,
+        precision       TEXT,                  -- exact|regional|uncertain
+        craft_type      TEXT,
+        craft_size_m    REAL,
+        recovery_status TEXT,
+        has_biologics   INTEGER,               -- 0/1
+        crew_count      TEXT,
+        evidence_quality TEXT,
+        source_confidence TEXT,
+        short_summary   TEXT,
+        raw_json        TEXT                   -- full record as JSON
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS nuclear_encounter (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_name       TEXT NOT NULL,
+        year            INTEGER,
+        date_event      TEXT,
+        base            TEXT,
+        city            TEXT,
+        region          TEXT,
+        country         TEXT,
+        latitude        REAL,
+        longitude       REAL,
+        weapon_system   TEXT,
+        incident_type   TEXT,                  -- overflight|intercept|etc.
+        missiles_affected INTEGER,
+        sensor_confirmation TEXT,              -- JSON array
+        witness_credibility TEXT,
+        evidence_quality TEXT,
+        source_confidence TEXT,
+        summary         TEXT,
+        raw_json        TEXT                   -- full record as JSON
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS facility (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        name            TEXT,
+        facility_type   TEXT,                  -- military_base|national_lab|contractor_site|test_range|etc.
+        latitude        REAL NOT NULL,
+        longitude       REAL NOT NULL,
+        source          TEXT                   -- 'crash_storage'|'nuclear_base'|'combined_geojson'
     )
     """)
 
