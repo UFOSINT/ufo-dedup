@@ -412,7 +412,7 @@ def create_schema(db_path=DB_PATH):
         ("UFOCAT", coll_map["UFOCAT"], "CUFOS UFOCAT 2023 database", "https://cufos.org", None),
         ("UPDB", coll_map["PUBLIUS"], "PhenomAInon Unified Phenomena Database — compiled and parsed by Publius", None, None),
         ("UFO-search", coll_map["GELDREICH"], "Majestic Timeline compilation (ufo-search.com)", "https://ufo-search.com", None),
-        ("Reddit-UFOs", coll_map["PUBLIUS"], "r/UFOs community sighting reports", "https://reddit.com/r/UFOs", None),
+        ("r/UFOs", coll_map["PUBLIUS"], "r/UFOs community sighting reports", "https://reddit.com/r/UFOs", None),
     ]
     cur.executemany("""
         INSERT OR IGNORE INTO source_database (name, collection_id, description, url, copyright)

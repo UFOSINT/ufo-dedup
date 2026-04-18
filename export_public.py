@@ -183,21 +183,59 @@ def check_source(source_path):
 # ============================================================
 
 def strip_sighting_columns(conn, extra_optional=False):
-    """Drop the raw text columns from `sighting` on the public copy.
+    """Strip raw text from `sighting` on the public copy.
 
-    Returns a list of columns actually dropped (may be shorter than
-    RAW_COLUMNS_TO_DROP if the source was already partially stripped).
+    For `description` and `summary`: instead of dropping the column
+    entirely, NULL out rows from legacy sources and KEEP the column
+    for sources that have LLM-generated content (Reddit). This way
+    the public DB popup can show a narrative for Reddit sightings
+    without exposing raw user-submitted text from legacy sources.
+
+    For `notes` and `raw_json`: dropped entirely (no safe content).
+
+    Returns a list of columns actually dropped or scrubbed.
     """
     existing = existing_columns(conn, "sighting")
-    to_drop = [c for c in RAW_COLUMNS_TO_DROP if c in existing]
-    if extra_optional:
-        to_drop += [c for c in OPTIONAL_FREE_TEXT_COLUMNS if c in existing]
-
     cur = conn.cursor()
-    for col in to_drop:
-        cur.execute(f"ALTER TABLE sighting DROP COLUMN {col}")
+
+    actions = []
+
+    # description + summary: NULL out legacy rows, keep column for LLM content
+    for col in ["description", "summary"]:
+        if col in existing:
+            # Find source IDs that have LLM-generated descriptions (Reddit)
+            cur.execute(
+                f"SELECT COUNT(*) FROM sighting "
+                f"WHERE {col} IS NOT NULL AND reddit_post_id IS NOT NULL"
+            )
+            llm_rows = cur.fetchone()[0]
+
+            if llm_rows > 0:
+                # NULL out legacy rows, keep LLM-generated rows
+                cur.execute(
+                    f"UPDATE sighting SET {col} = NULL "
+                    f"WHERE reddit_post_id IS NULL"
+                )
+                actions.append(f"{col} (NULLed legacy, kept {llm_rows:,} LLM rows)")
+            else:
+                # No LLM content — drop entirely
+                cur.execute(f"ALTER TABLE sighting DROP COLUMN {col}")
+                actions.append(f"{col} (dropped)")
+
+    # notes + raw_json: always drop entirely (never safe for public)
+    for col in ["notes", "raw_json"]:
+        if col in existing:
+            cur.execute(f"ALTER TABLE sighting DROP COLUMN {col}")
+            actions.append(f"{col} (dropped)")
+
+    if extra_optional:
+        for col in OPTIONAL_FREE_TEXT_COLUMNS:
+            if col in existing:
+                cur.execute(f"ALTER TABLE sighting DROP COLUMN {col}")
+                actions.append(f"{col} (dropped)")
+
     conn.commit()
-    return to_drop
+    return actions
 
 
 def drop_private_tables(conn):
