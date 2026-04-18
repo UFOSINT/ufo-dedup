@@ -32,6 +32,12 @@ import time
 
 import requests
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORK_QUEUE = os.path.join(BASE_DIR, "data", "raw", "reddit", "work_queue.json")
 RAW_DIR = os.path.join(BASE_DIR, "data", "raw", "reddit", "raw")
@@ -39,6 +45,74 @@ SCRAPE_LOG = os.path.join(BASE_DIR, "data", "raw", "reddit", "scrape_log.json")
 
 DEFAULT_DELAY = 1.1  # seconds between requests (public endpoint ~60/min)
 USER_AGENT = "UFOSINTScraper/1.0 (research; ufosint.com; contact: torylogos@gmail.com)"
+
+
+# ============================================================
+# UFO-mode CLI chrome
+# ============================================================
+if sys.platform == "win32":
+    os.system("")  # enable ANSI VT processing on Windows conhost
+
+NO_COLOR = os.environ.get("NO_COLOR") or not sys.stdout.isatty()
+
+class C:
+    RESET  = "" if NO_COLOR else "\033[0m"
+    DIM    = "" if NO_COLOR else "\033[2m"
+    BOLD   = "" if NO_COLOR else "\033[1m"
+    GREEN  = "" if NO_COLOR else "\033[92m"
+    YELLOW = "" if NO_COLOR else "\033[93m"
+    RED    = "" if NO_COLOR else "\033[91m"
+    CYAN   = "" if NO_COLOR else "\033[96m"
+    MAGENTA= "" if NO_COLOR else "\033[95m"
+    BLUE   = "" if NO_COLOR else "\033[94m"
+    GREY   = "" if NO_COLOR else "\033[90m"
+
+BANNER = r"""
+{c}       ╔═══════════════════════════════════════════════════════════════╗
+       ║                       .  ·  ·   ·  ·  .                      ║
+       ║                 ·    ▄▄▄███████▄▄▄    ·                      ║
+       ║              ·   ▄██▀▀         ▀▀██▄   ·                     ║
+       ║               ▄██                   ██▄                      ║
+       ║              █████████████████████████     ·                 ║
+       ║               ▀▀██▄▄  ·  ·  ·  ▄▄██▀▀                        ║
+       ║              ·    ▀▀▀▀███████▀▀▀▀    ·                       ║
+       ║                 ·     ·  ·  ·  ·  ·                          ║
+       ║                                                               ║
+       ║     {m}r/UFOs SIGHTING SCRAPER{c} · {g}PASS 1{c} · {d}transmission v1.0{c}      ║
+       ╚═══════════════════════════════════════════════════════════════╝{r}
+""".format(c=C.CYAN, m=C.MAGENTA + C.BOLD, g=C.GREEN + C.BOLD, d=C.DIM + C.CYAN, r=C.RESET)
+
+REPORT_WIDTH = 54  # inner width of the intelligence report box
+
+def _row(plain, display=None):
+    """One row of the intelligence report. `plain` is used for width; `display`
+    may include ANSI color codes (zero visual width)."""
+    if display is None:
+        display = plain
+    pad = max(0, REPORT_WIDTH - len(plain))
+    return f"{C.CYAN}   ║{C.RESET}{display}{' ' * pad}{C.CYAN}║{C.RESET}"
+
+def _tag(color, label):
+    return f"{color}[{label:^5}]{C.RESET}"
+
+TAG_SYS  = lambda: _tag(C.CYAN,    "SYS")
+TAG_NET  = lambda: _tag(C.BLUE,    "NET")
+TAG_OK   = lambda: _tag(C.GREEN,   " OK ")
+TAG_DEL  = lambda: _tag(C.YELLOW,  "DEAD")
+TAG_ERR  = lambda: _tag(C.RED,     "ERR!")
+TAG_RATE = lambda: _tag(C.MAGENTA, "WAIT")
+TAG_INTEL= lambda: _tag(C.MAGENTA, "INTL")
+
+def sysline(msg):  print(f"{TAG_SYS()} {msg}")
+def netline(msg):  print(f"{TAG_NET()} {msg}")
+def warnline(msg): print(f"{TAG_DEL()} {C.YELLOW}{msg}{C.RESET}")
+def errline(msg):  print(f"{TAG_ERR()} {C.RED}{msg}{C.RESET}")
+
+def bar(frac, width=32):
+    filled = int(width * frac)
+    return (
+        f"{C.GREEN}{'█' * filled}{C.GREY}{'░' * (width - filled)}{C.RESET}"
+    )
 
 
 # ============================================================
@@ -90,7 +164,7 @@ def fetch_post_json(reddit_url, session=None):
                 op_comments.append(body)
                 if parent_body:
                     question_answer_pairs.append({
-                        "question": parent_body[:500],
+                        "question": parent_body,
                         "answer": body,
                     })
 
@@ -118,9 +192,18 @@ def fetch_post_json(reddit_url, session=None):
     ):
         media_urls.append(post_url)
 
-    # Reddit gallery
-    if post.get("media_metadata"):
-        for mid, meta in post["media_metadata"].items():
+    # Reddit gallery — prefer gallery_data ordering when present
+    media_metadata = post.get("media_metadata") or {}
+    gallery_data = post.get("gallery_data") or {}
+    gallery_items = gallery_data.get("items") or []
+    if gallery_items:
+        for item in gallery_items:
+            meta = media_metadata.get(item.get("media_id"), {})
+            url = (meta.get("s") or {}).get("u")
+            if url:
+                media_urls.append(url.replace("&amp;", "&"))
+    elif media_metadata:
+        for _mid, meta in media_metadata.items():
             url = (meta.get("s") or {}).get("u")
             if url:
                 media_urls.append(url.replace("&amp;", "&"))
@@ -131,12 +214,27 @@ def fetch_post_json(reddit_url, session=None):
         if rv.get("fallback_url"):
             media_urls.append(rv["fallback_url"])
 
-    # Crosspost media
-    if post.get("crosspost_parent_list"):
-        for xp in post["crosspost_parent_list"]:
-            xp_url = xp.get("url", "")
-            if xp_url and xp_url not in media_urls:
-                media_urls.append(xp_url)
+    # Preview images (lower priority — thumbnails, but often the only media
+    # source for link posts where the external URL is no longer reachable)
+    preview = post.get("preview") or {}
+    for img in preview.get("images") or []:
+        src = (img.get("source") or {}).get("url")
+        if src:
+            media_urls.append(src.replace("&amp;", "&"))
+
+    # Crosspost media — recurse into parent's url + media_metadata
+    for xp in post.get("crosspost_parent_list") or []:
+        xp_url = xp.get("url", "")
+        if xp_url:
+            media_urls.append(xp_url)
+        for _mid, meta in (xp.get("media_metadata") or {}).items():
+            url = (meta.get("s") or {}).get("u")
+            if url:
+                media_urls.append(url.replace("&amp;", "&"))
+
+    # Dedupe while preserving order
+    seen = set()
+    media_urls = [u for u in media_urls if not (u in seen or seen.add(u))]
 
     return {
         "post_id": post.get("id", post.get("name", "")),
@@ -182,7 +280,7 @@ def fetch_post_praw(post_id, reddit_instance):
                     try:
                         parent = comment.parent()
                         question_answer_pairs.append({
-                            "question": parent.body[:500],
+                            "question": parent.body,
                             "answer": comment.body,
                         })
                     except Exception:
@@ -191,11 +289,45 @@ def fetch_post_praw(post_id, reddit_instance):
         media_urls = []
         if submission.url and submission.url != submission.permalink:
             media_urls.append(submission.url)
-        if hasattr(submission, "media_metadata") and submission.media_metadata:
-            for mid, meta in submission.media_metadata.items():
+
+        mm = getattr(submission, "media_metadata", None) or {}
+        gd = getattr(submission, "gallery_data", None) or {}
+        gitems = gd.get("items") if isinstance(gd, dict) else []
+        if gitems:
+            for item in gitems:
+                meta = mm.get(item.get("media_id"), {})
                 url = (meta.get("s") or {}).get("u")
                 if url:
                     media_urls.append(url.replace("&amp;", "&"))
+        elif mm:
+            for _mid, meta in mm.items():
+                url = (meta.get("s") or {}).get("u")
+                if url:
+                    media_urls.append(url.replace("&amp;", "&"))
+
+        if submission.is_video:
+            media = getattr(submission, "media", None) or {}
+            rv = media.get("reddit_video", {}) if isinstance(media, dict) else {}
+            if rv.get("fallback_url"):
+                media_urls.append(rv["fallback_url"])
+
+        preview = getattr(submission, "preview", None) or {}
+        for img in preview.get("images") or []:
+            src = (img.get("source") or {}).get("url")
+            if src:
+                media_urls.append(src.replace("&amp;", "&"))
+
+        for xp in getattr(submission, "crosspost_parent_list", None) or []:
+            xp_url = xp.get("url", "")
+            if xp_url:
+                media_urls.append(xp_url)
+            for _mid, meta in (xp.get("media_metadata") or {}).items():
+                url = (meta.get("s") or {}).get("u")
+                if url:
+                    media_urls.append(url.replace("&amp;", "&"))
+
+        seen = set()
+        media_urls = [u for u in media_urls if not (u in seen or seen.add(u))]
 
         return {
             "post_id": submission.id,
@@ -241,73 +373,86 @@ def save_progress(completed):
 
 def run_scrape(use_praw=False, limit=None, resume=True, delay=DEFAULT_DELAY):
     """Main scrape loop."""
-    # Load work queue
+    print(BANNER)
+
     with open(WORK_QUEUE, "r", encoding="utf-8") as f:
         queue = json.load(f)
-    print(f"Work queue: {len(queue):,} posts")
+    sysline(f"target queue loaded         :: {C.BOLD}{len(queue):,}{C.RESET} sightings catalogued")
 
     if limit:
         queue = queue[:limit]
-        print(f"  (limited to first {limit})")
+        sysline(f"{C.YELLOW}reconnaissance mode{C.RESET}         :: first {C.BOLD}{limit}{C.RESET} targets only")
 
-    # Resume support
     completed = load_progress() if resume else set()
+    if resume and os.path.isdir(RAW_DIR):
+        for fname in os.listdir(RAW_DIR):
+            if fname.endswith(".json"):
+                completed.add(fname[:-5])
     remaining = [p for p in queue if p["post_id"] not in completed]
-    print(f"Already scraped: {len(completed):,}")
-    print(f"Remaining: {len(remaining):,}")
+    sysline(f"previously acquired         :: {C.DIM}{len(completed):,}{C.RESET}")
+    sysline(f"remaining signals           :: {C.BOLD}{C.CYAN}{len(remaining):,}{C.RESET}")
 
     if not remaining:
-        print("Nothing to scrape.")
+        sysline(f"{C.GREEN}all targets acquired — nothing to do.{C.RESET}")
         return
 
     os.makedirs(RAW_DIR, exist_ok=True)
 
-    # Init PRAW if requested
     reddit = None
     if use_praw:
         try:
             import praw
+            netline(f"{C.DIM}handshaking with reddit data gateway...{C.RESET}")
             reddit = praw.Reddit(
                 client_id=os.environ["REDDIT_CLIENT_ID"],
                 client_secret=os.environ["REDDIT_CLIENT_SECRET"],
+                username=os.environ.get("REDDIT_USERNAME"),
+                password=os.environ.get("REDDIT_PASSWORD"),
                 user_agent=os.environ.get("REDDIT_USER_AGENT", USER_AGENT),
             )
-            print(f"PRAW authenticated as: {reddit.user.me()}")
-        except Exception as e:
-            print(f"PRAW init failed: {e}")
-            print("Falling back to public JSON endpoint.")
+            me = reddit.user.me()
+            netline(f"authenticated as            :: {C.GREEN}{C.BOLD}{me}{C.RESET} {C.GREEN}●{C.RESET} {C.DIM}OAUTH SECURE{C.RESET}")
+        except KeyError as e:
+            warnline(f"missing env var: {e}")
+            warnline("set REDDIT_CLIENT_ID / _SECRET / _USERNAME / _PASSWORD in .env")
+            warnline("falling back to public JSON endpoint.")
             use_praw = False
+        except Exception as e:
+            warnline(f"PRAW init failed: {e}")
+            warnline("falling back to public JSON endpoint.")
+            use_praw = False
+    else:
+        netline(f"mode                        :: {C.DIM}public json endpoint (unauth){C.RESET}")
 
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
 
+    print(f"\n{C.CYAN}    ▼ ▼ ▼  engaging deep scan  ▼ ▼ ▼{C.RESET}\n")
+
     t0 = time.time()
     errors = 0
+    dead = 0
 
     for i, post in enumerate(remaining):
         pid = post["post_id"]
         url = post["url"]
 
-        # Fetch
         if use_praw and reddit:
             result = fetch_post_praw(pid, reddit)
         else:
             result = fetch_post_json(url, session)
 
-        # Handle rate limiting
         if result.get("error") == "rate_limited":
             wait = int(result.get("retry_after", 60))
-            print(f"\n  Rate limited. Waiting {wait}s...")
+            print(f"\n{TAG_RATE()} {C.MAGENTA}throttled by gateway — cooling down {wait}s...{C.RESET}")
             time.sleep(wait)
             result = fetch_post_json(url, session)
 
-        # Save
         if "error" in result:
             errors += 1
             result["post_id"] = pid
             result["url"] = url
 
-        # Attach xlsx metadata
         result["xlsx_location"] = post.get("xlsx_location")
         result["xlsx_date"] = post.get("xlsx_date")
         result["xlsx_submitted"] = post.get("xlsx_submitted")
@@ -319,59 +464,94 @@ def run_scrape(use_praw=False, limit=None, resume=True, delay=DEFAULT_DELAY):
 
         completed.add(pid)
 
-        # Progress
         elapsed = time.time() - t0
         rate = (i + 1) / elapsed if elapsed > 0 else 0
         eta = (len(remaining) - i - 1) / rate if rate > 0 else 0
-        status = "ERR" if "error" in result else "DEL" if result.get("deleted") else "OK "
+        frac = (i + 1) / len(remaining)
+
+        if "error" in result:
+            tag = TAG_ERR()
+        elif result.get("deleted"):
+            tag = TAG_DEL()
+            dead += 1
+        else:
+            tag = TAG_OK()
+
+        eta_str = (
+            f"{eta/60:4.0f}m" if eta >= 60 else f"{eta:4.0f}s"
+        )
         sys.stdout.write(
-            f"\r  [{status}] {i+1:,}/{len(remaining):,} "
-            f"({100*(i+1)/len(remaining):.1f}%) "
-            f"{rate:.1f}/s, ~{eta/60:.0f}m remaining  "
+            f"\r  {tag} {bar(frac)} "
+            f"{C.BOLD}{i+1:>5,}{C.RESET}{C.DIM}/{len(remaining):,}{C.RESET} "
+            f"{C.CYAN}{frac*100:5.1f}%{C.RESET}  "
+            f"{C.DIM}{rate:4.1f}/s  eta {eta_str}{C.RESET}  "
+            f"{C.MAGENTA}◉{C.RESET} {C.DIM}{pid}{C.RESET}    "
         )
         sys.stdout.flush()
 
-        # Save progress every 50 posts
         if (i + 1) % 50 == 0:
             save_progress(completed)
 
-        # Rate limit delay (public endpoint only)
         if not use_praw:
             time.sleep(delay)
 
     save_progress(completed)
 
     elapsed = time.time() - t0
-    print(f"\n\nScrape complete:")
-    print(f"  Total: {len(remaining):,} posts in {elapsed:.0f}s ({elapsed/60:.1f} min)")
-    print(f"  Errors: {errors:,}")
-    print(f"  Saved to: {RAW_DIR}")
 
-    # Quick stats on the scraped data
-    deleted = 0
-    has_text = 0
-    has_media = 0
-    has_op_comments = 0
+    # Recount from disk for intelligence report
+    has_text = has_media = has_op = deleted_total = 0
     for p in remaining:
         path = os.path.join(RAW_DIR, f"{p['post_id']}.json")
         if not os.path.exists(path):
             continue
         with open(path, "r", encoding="utf-8") as f:
             d = json.load(f)
-        if d.get("deleted"):
-            deleted += 1
-        if d.get("selftext") and len(d["selftext"]) > 10:
-            has_text += 1
-        if d.get("media_urls"):
-            has_media += 1
-        if d.get("op_comments"):
-            has_op_comments += 1
+        if d.get("deleted"): deleted_total += 1
+        if d.get("selftext") and len(d["selftext"]) > 10: has_text += 1
+        if d.get("media_urls"): has_media += 1
+        if d.get("op_comments"): has_op += 1
 
-    print(f"\n  Stats:")
-    print(f"    Deleted/removed: {deleted:,}")
-    print(f"    Has selftext: {has_text:,}")
-    print(f"    Has media: {has_media:,}")
-    print(f"    Has OP comments: {has_op_comments:,}")
+    n = len(remaining)
+    def pct(x): return f"{100*x/n:5.1f}%" if n else "    -"
+
+    err_color = C.RED if errors else C.DIM
+    print("\n")
+    print(f"{C.CYAN}   ╔══════════════════════════════════════════════════════╗{C.RESET}")
+
+    title_plain = "         ◉  INTELLIGENCE REPORT  ◉"
+    title_disp  = f"         {C.MAGENTA}{C.BOLD}◉  INTELLIGENCE REPORT  ◉{C.RESET}"
+    print(_row(title_plain, title_disp))
+
+    print(f"{C.CYAN}   ╠══════════════════════════════════════════════════════╣{C.RESET}")
+
+    rows = [
+        (f"   signals acquired       ::  {n:>6,}",
+         f"   signals acquired       ::  {C.BOLD}{n:>6,}{C.RESET}"),
+        (f"   transmission duration  ::  {elapsed/60:>5.1f}m ({elapsed:.0f}s)",
+         f"   transmission duration  ::  {C.BOLD}{elapsed/60:>5.1f}m{C.RESET} ({elapsed:.0f}s)"),
+        (f"   errors / anomalies     ::  {errors:>6,}",
+         f"   errors / anomalies     ::  {err_color}{errors:>6,}{C.RESET}"),
+    ]
+    for p, d in rows:
+        print(_row(p, d))
+
+    print(f"{C.CYAN}   ╟──────────────────────────────────────────────────────╢{C.RESET}")
+
+    sig_rows = [
+        ("classified / redacted", deleted_total, C.YELLOW),
+        ("testimony captured   ", has_text,      C.GREEN),
+        ("media attached       ", has_media,     C.GREEN),
+        ("OP cross-examined    ", has_op,        C.GREEN),
+    ]
+    for label, val, color in sig_rows:
+        plain = f"   {label} ::  {val:>6,}  ({pct(val)})"
+        disp  = f"   {color}{label}{C.RESET} ::  {C.BOLD}{val:>6,}{C.RESET}  {C.DIM}({pct(val)}){C.RESET}"
+        print(_row(plain, disp))
+
+    print(f"{C.CYAN}   ╚══════════════════════════════════════════════════════╝{C.RESET}")
+    print(f"\n   {C.DIM}vault →{C.RESET} {C.CYAN}{RAW_DIR}{C.RESET}")
+    print(f"   {C.MAGENTA}▲ standing by for analysis team handoff ▲{C.RESET}\n")
 
 
 # ============================================================
