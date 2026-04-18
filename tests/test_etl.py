@@ -110,7 +110,7 @@ class TestSchemaCreation:
         cur = schema_db.cursor()
         cur.execute("SELECT id, name FROM source_database ORDER BY id")
         rows = cur.fetchall()
-        expected = [(1, 'MUFON'), (2, 'NUFORC'), (3, 'UFOCAT'), (4, 'UPDB'), (5, 'UFO-search'), (6, 'Reddit-UFOs')]
+        expected = [(1, 'MUFON'), (2, 'NUFORC'), (3, 'UFOCAT'), (4, 'UPDB'), (5, 'UFO-search'), (6, 'r/UFOs')]
         assert rows == expected
 
     def test_source_database_ids_match_constants(self, schema_db):
