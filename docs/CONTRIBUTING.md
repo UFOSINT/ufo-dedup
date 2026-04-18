@@ -1,6 +1,6 @@
 # Contributing — How to Extend the Pipeline
 
-Three common extension paths, with worked examples. Each one is tested against the actual codebase as of the v0.11 build.
+Three common extension paths, with worked examples. Each one is tested against the actual codebase as of the v0.13 build (618,316 sightings, 6 sources).
 
 | You want to add… | Read section… | Approximate effort |
 |---|---|---|

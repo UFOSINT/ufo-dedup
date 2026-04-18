@@ -18,7 +18,7 @@ Five aggregator databases (NUFORC, MUFON, UFOCAT, UPDB, UFO-search) overlap heav
 | UPDB | 131,506 records (`name=MUFON`) | MUFON imported separately |
 | UPDB | 1,689,235 records (`name=NUFORC`) | NUFORC imported separately |
 
-Total eliminated before dedup: **1,944,045 records**. Working set drops from ~2.56M raw to **614,505**.
+Total eliminated before dedup: **1,944,045 records**. Working set drops from ~2.56M raw to **614,505** (plus 3,811 from the r/UFOs Reddit ingest, for **618,316 total**).
 
 The skipped UFOCAT UFOReportCtr records aren't discarded — they go to a sidecar JSONL file (`ufocat_enrichment.jsonl`) and `enrich.py` later transfers their Hynek/Vallée classifications to matching NUFORC records. This is where NUFORC's 102,554 Hynek codes and 83,710 Vallée codes come from — NUFORC has **none natively**.
 
@@ -56,7 +56,7 @@ A date with 100 records from 3 sources would generate `100*100/2 = 5000` pairs; 
 
 ### What dedup does NOT do
 
-- **No deletion.** All 614,505 sightings remain in the database. `duplicate_candidate` is purely advisory.
+- **No deletion.** All 618,316 sightings remain in the database. `duplicate_candidate` is purely advisory.
 - **No within-source dedup.** Two NUFORC records for the same event are not flagged.
 - **No transitive closure.** `A↔B` and `B↔C` does not infer `A↔C`.
 - **No automatic merging.** Downstream tooling decides what to do with high-confidence pairs.
@@ -383,6 +383,6 @@ This pattern was added in v0.11 specifically to make future recursive-AI / LLM e
 | Allowlist via `PUBLIC_TABLES` | Anything not in the allowlist is dropped on every export. New tables default to private unless explicitly added. |
 | `VACUUM` after drops | Reclaims the disk space (PG and SQLite both leave dead tuples in heap pages until vacuumed). |
 
-Result: 1.7 GB private DB → 507 MB public DB (71.6% reclaimed). 614,505 sightings × 69 columns, all derived fields intact, zero raw narrative text.
+Result: 1.8 GB private DB → 553 MB public DB (70% reclaimed). 618,316 sightings × 94 columns, all derived fields intact, zero raw narrative text (except LLM-generated summaries for Reddit sightings).
 
 See [PITFALLS.md](PITFALLS.md) for the `witness_names` privacy note — short structured-adjacent text that's intentionally kept but worth a second look if you redistribute the export.

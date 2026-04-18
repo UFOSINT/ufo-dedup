@@ -7,7 +7,7 @@ Reproducibility-first docs for the unified UFO sightings pipeline. Start here, t
 | Goal | Read |
 |---|---|
 | Understand what this project is | [`../README.md`](../README.md) (top-level) |
-| Reproduce the v0.11 build from scratch | [`PIPELINE.md`](PIPELINE.md) — step-by-step tutorial with expected outputs |
+| Reproduce the v0.13 build from scratch | [`PIPELINE.md`](PIPELINE.md) — step-by-step tutorial with expected outputs |
 | Get the source data | [`../data/raw/README.md`](../data/raw/README.md) — per-source acquisition guide |
 | Query the public DB | [`QUERIES.md`](QUERIES.md) — ~25 tested SQL recipes |
 | Look up a column's meaning / coverage | [`SCHEMA.md`](SCHEMA.md) — column-by-column reference |
@@ -21,9 +21,9 @@ Reproducibility-first docs for the unified UFO sightings pipeline. Start here, t
 These docs are deliberately:
 
 - **Tested.** Every SQL query in `QUERIES.md` was run against the live `ufo_public.db`. Every command in `PIPELINE.md` was executed during a real rebuild. Every code sample in `CONTRIBUTING.md` matches the current codebase.
-- **Numerically grounded.** Coverage percentages, row counts, and distribution histograms come from the actual v0.11 build (614,505 sightings) — not estimates. If your numbers diverge from these by more than a few hundred rows on any given metric, something probably differs in your source data snapshot.
-- **Honest about gaps.** The empty columns (`topic_id`, `duration_seconds`, `duration_bucket`), the model artifacts (GoEmotions neutral skew, VADER positivity bias), and the privacy considerations (`witness_names`) are flagged in [`PITFALLS.md`](PITFALLS.md), not hidden.
-- **Versioned.** All numbers are from v0.11. When v0.12 ships, these docs need re-validation.
+- **Numerically grounded.** Coverage percentages, row counts, and distribution histograms come from the actual v0.13 build (618,316 sightings, 6 sources) — not estimates. If your numbers diverge from these by more than a few hundred rows on any given metric, something probably differs in your source data snapshot.
+- **Honest about gaps.** The empty columns (`topic_id`), the model artifacts (GoEmotions neutral skew, VADER positivity bias), and the privacy considerations (`witness_names`) are flagged in [`PITFALLS.md`](PITFALLS.md), not hidden.
+- **Versioned.** All numbers are from v0.13. When the next version ships, these docs need re-validation.
 
 ## What's intentionally NOT in these docs
 

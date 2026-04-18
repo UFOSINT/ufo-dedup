@@ -1,6 +1,6 @@
 # Pipeline Tutorial — Reproducing v0.11 from Scratch
 
-A complete walkthrough that takes you from a fresh clone of `ufo-dedup` and the 5 source datasets to your own copy of `ufo_public.db`. Each step includes the exact command, expected output (with real numbers from our build), wall-clock timing, and what to do if it goes wrong.
+A complete walkthrough that takes you from a fresh clone of `ufo-dedup` and the 6 source datasets to your own copy of `ufo_public.db`. Each step includes the exact command, expected output (with real numbers from our v0.13 build), wall-clock timing, and what to do if it goes wrong.
 
 This is the **operational** companion to:
 - [`README.md`](../README.md) — what the project is
@@ -138,7 +138,7 @@ Gazetteer loaded: 191,181 exact keys, 186,847 city+country keys, 182,088 city-on
 
 ## 4. Run the structural rebuild
 
-This is the long step. Imports all 5 sources, applies data quality fixes, geocodes, enriches NUFORC with UFOCAT metadata, runs deduplication, computes sentiment, runs the derived analysis pipeline.
+This is the long step. Imports the 5 legacy sources, applies data quality fixes, geocodes, enriches NUFORC with UFOCAT metadata, runs deduplication, computes sentiment, runs the derived analysis pipeline. (Reddit is imported separately — see step 6 below.)
 
 ```bash
 python rebuild_db.py
@@ -172,7 +172,7 @@ python rebuild_db.py
   MUFON              138,310
   UPDB                65,016
   UFO-search          54,751
-  TOTAL              614,505
+  TOTAL              614,505    (before Reddit ingest — see step 6)
 
   Duplicate candidates: 126,729
   NUFORC records with Hynek (enriched): 102,554

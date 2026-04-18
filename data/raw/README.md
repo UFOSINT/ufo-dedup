@@ -107,7 +107,7 @@ The data ecosystem around UFO/UAP reports is fragmented — sources have differe
 | 5. Import UPDB | `UPDB.app/phenomenAInon_UPDB.csv` | 65,016 rows imported, 1,820,741 MUFON/NUFORC duplicates skipped |
 | 6. Import UFO-search | `UFO-search/majestic.json` | 54,751 rows |
 
-**Total after import: 614,505 unique sightings.** See the main `README.md` for the full pipeline (geocoding, enrichment, deduplication, derived analysis, emotion classification, public export).
+**Total after import: 618,316 unique sightings** (614,505 from 5 legacy sources + 3,811 from r/UFOs Reddit ingest). See the main `README.md` for the full pipeline (geocoding, enrichment, deduplication, derived analysis, emotion classification, public export).
 
 ---
 

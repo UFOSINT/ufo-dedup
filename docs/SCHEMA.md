@@ -1,6 +1,6 @@
 # `ufo_public.db` — Schema Reference
 
-Column-by-column reference for the public export. All numbers below are from a real v0.11 build (614,505 sightings, 502,985 with narrative text). Coverage percentages tell you how often a column is non-null — useful for planning queries that won't return mostly empty rows.
+Column-by-column reference for the public export. Numbers below are from the v0.13 build (618,316 sightings across 6 sources, 506,788 with narrative text). Coverage percentages tell you how often a column is non-null — useful for planning queries that won't return mostly empty rows.
 
 > **What's NOT in this file**: the long narrative text columns (`description`, `summary`, `notes`, `raw_json`) are stripped during the public export. Everything below is what survives. See `data/raw/README.md` for how to obtain the source data and rebuild from scratch if you need the full text.
 
@@ -8,10 +8,10 @@ Column-by-column reference for the public export. All numbers below are from a r
 
 | Table | Rows | Purpose |
 |---|---:|---|
-| `sighting` | 614,505 | One row per reported sighting. The main table. 69 columns. |
+| `sighting` | 618,316 | One row per reported sighting. The main table. 94 columns. |
 | `location` | 214,782 | Deduplicated locations. Joined via `sighting.location_id`. 11 columns. |
-| `sighting_analysis` | 614,505 | JSON side-fields per sighting. Joined via `sighting_analysis.sighting_id`. 8 columns. |
-| `source_database` | 5 | Source lookup. Joined via `sighting.source_db_id`. |
+| `sighting_analysis` | 618,316 | JSON side-fields per sighting. Joined via `sighting_analysis.sighting_id`. 8 columns. |
+| `source_database` | 6 | Source lookup. Joined via `sighting.source_db_id`. |
 | `source_collection` | 3 | Higher-level grouping above source_database. |
 | `source_origin` | 31 | Upstream sources within aggregator databases. Joined via `sighting.origin_id`. |
 
@@ -172,8 +172,9 @@ Richer derived fields kept in a side table because they're JSON blobs not suited
 | 3 | UFOCAT | CUFOS UFOCAT 2023 catalog |
 | 4 | UPDB | PhenomAInon Unified Phenomena Database |
 | 5 | UFO-search | Geldreich's Majestic Timeline compilation |
+| 6 | r/UFOs | Reddit r/UFOs community sighting reports (LLM-extracted) |
 
-`source_collection` groups these into PUBLIUS (MUFON+NUFORC+UPDB), GELDREICH (UFO-search), UFOCAT (just UFOCAT). Mostly internal — most queries care about `source_database.name`.
+`source_collection` groups these into PUBLIUS (MUFON+NUFORC+UPDB+r/UFOs), GELDREICH (UFO-search), UFOCAT (just UFOCAT). Mostly internal — most queries care about `source_database.name`.
 
 `source_origin` (31 rows) tracks upstream sources within aggregator databases — NICAP, BLUEBOOK, UFODNA, BAASS, NIDS, SKINWALKER, PILOTS, BRAZILGOV, CANADAGOV, UKTNA, Hatch, ValleeMagonia, WondersInTheSky, EberhartUFOI, etc. Joined via `sighting.origin_id`.
 

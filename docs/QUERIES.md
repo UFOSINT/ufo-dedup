@@ -1,6 +1,6 @@
 # `ufo_public.db` — Query Recipes
 
-A practical, copy-pasteable cookbook of SQL queries against the public SQLite. Every query in this file has been run against the live v0.11 build (614,505 sightings) and the actual result counts are inline below the query.
+A practical, copy-pasteable cookbook of SQL queries against the public SQLite. Queries were tested against the v0.13 build (618,316 sightings across 6 sources). Inline result counts are approximate — your numbers may differ slightly depending on your source data snapshot.
 
 > **Companion**: see [SCHEMA.md](SCHEMA.md) for a column-by-column reference of every field referenced here.
 
@@ -18,14 +18,14 @@ import sqlite3
 conn = sqlite3.connect('data/output/ufo_public.db')
 cur = conn.cursor()
 cur.execute('SELECT COUNT(*) FROM sighting')
-print(cur.fetchone()[0])  # 614505
+print(cur.fetchone()[0])  # 618316
 "
 ```
 
 `source_db_id` lookup (worth memorizing):
 
 ```
-1 = MUFON     2 = NUFORC     3 = UFOCAT     4 = UPDB     5 = UFO-search
+1 = MUFON     2 = NUFORC     3 = UFOCAT     4 = UPDB     5 = UFO-search     6 = r/UFOs
 ```
 
 ---

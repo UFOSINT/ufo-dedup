@@ -2,7 +2,53 @@
 
 Version provenance for the unified UFO sightings pipeline. Each version is identified by what shipped to the public Postgres DB, not by a code release tag.
 
-## v0.11.0 — Transformer emotion classification (current)
+## v0.13.0 — Reddit r/UFOs ingest + geocoding upgrade (current)
+
+3,811 sighting reports from Reddit's r/UFOs community, scraped via PRAW and structured via LLM extraction (Gemini 2.0 Flash on OpenRouter, ~$3-4 total).
+
+**New source**
+- `r/UFOs` (source_db_id=6) — 3,811 community-submitted sighting reports. Three-pass pipeline: `scrape_reddit.py` (PRAW) → `extract_reddit.py` (LLM via OpenRouter, 10 parallel workers) → `import_reddit.py` (DB import with CHECK constraint normalization).
+
+**New columns on sighting**
+- `reddit_post_id` (UNIQUE), `reddit_url` — Reddit provenance
+- `llm_confidence`, `llm_anomaly_assessment`, `llm_prosaic_candidate`, `llm_strangeness_rating`, `llm_model` — LLM-derived classifications
+- `has_photo`, `has_video` — universal media flags (split from `has_media`)
+
+**Geocoding upgrade**
+- Switched from `cities15000.txt` (pop ≥15K) to `cities1000.txt` (pop ≥1K, 167K entries)
+- Total coord coverage: 64.5% → **75.8%** (+69,829 map points)
+- Reddit coord coverage: 3.1% → **72.9%** (2,777 of 3,811)
+
+**Content policy**
+- LLM-generated summaries stored in `description` for Reddit rows (transformative, safe to publish)
+- Raw Reddit text (selftext, title, author, comments) NOT stored in PG
+- `export_public.py` updated: NULLs legacy descriptions, keeps Reddit LLM summaries
+
+**Anomaly assessment (Reddit only)**
+- 31% anomalous, 46% prosaic, 22% ambiguous (of 3,811)
+- Strangeness ratings 1-5 on every Reddit row
+- Prosaic candidates identified: Starlink, drones, aircraft, satellites, etc.
+
+**Total sightings: 618,316** across 6 sources.
+
+## v0.12.0 — NRC Lexicon + UAP Gerb nuclear proximity overlay
+
+10 NRC word-count columns denormalized onto sighting + nuclear proximity for all geocoded rows + 3 overlay tables from the UAP Gerb crash-retrieval research bundle.
+
+**New columns on sighting**
+- `nrc_joy` through `nrc_negative` — 10 NRC emotion word-counts
+- `distance_to_nearest_nuclear_site_km`, `nearest_nuclear_site_name` — haversine distance to nearest of 50 nuclear-relevant facilities
+
+**New tables**
+- `crash_retrieval` (14 rows) — canonical crash-retrieval cases 1897-1997
+- `nuclear_encounter` (35 rows) — Hastings corpus nuclear sighting records
+- `facility` (75 rows) — geocoded nuclear/military facilities
+
+**Coverage**
+- 34,179 sightings within 50 km of a nuclear facility
+- 67,811 within 100 km
+
+## v0.11.0 — Transformer emotion classification
 
 GPU-accelerated transformer-based emotion classification on every sighting with narrative text (502,985 rows = 81.9% coverage). Adds 12 new columns to `sighting`.
 

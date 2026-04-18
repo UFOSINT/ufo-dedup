@@ -1,6 +1,6 @@
 # Unified UFO Sightings Database
 
-A unified SQLite database merging five major UFO/UAP sighting databases into a single, deduplicated repository of **614,505 sighting records** spanning from antiquity to 2026, with **126,730 duplicate candidate pairs** flagged for review.
+A unified SQLite database merging six major UFO/UAP sighting databases into a single, deduplicated repository of **618,316 sighting records** spanning from antiquity to 2026, with **126,730 duplicate candidate pairs** flagged for review.
 
 **For researchers reproducing this work**, jump to [`docs/`](docs/) (full index in [`docs/README.md`](docs/README.md)):
 
@@ -24,7 +24,7 @@ A unified SQLite database merging five major UFO/UAP sighting databases into a s
 | **UFO-search** | JSON (72 MB) | 54,751 | 54,751 | 0 | 20 | Majestic Timeline compilation from ufo-search.com. Historical records from 19 source compilations (Hatch, Eberhart, NICAP, Vallee, etc.). |
 
 **Total raw records across all sources: ~2.56 million**
-**After removing known overlaps at import time: 614,505**
+**After removing known overlaps at import time: 614,505** (+ 3,811 from r/UFOs community reports = **618,316 total**)
 
 ### Why UFOCAT Skips UFOReportCtr Records
 
@@ -57,7 +57,7 @@ Only UFOReportCtr is skipped at import time. Other overlaps are handled by the d
 
 ### Core Tables
 
-**`sighting`** (614,505 rows, 69 columns) — The main table. Each row is one reported sighting event.
+**`sighting`** (618,316 rows, 94 columns) — The main table. Each row is one reported sighting event.
 
 - **Provenance**: `source_db_id`, `source_record_id`, `origin_id`, `origin_record_id`
 - **Dates**: `date_event` (ISO 8601), `date_event_raw`, `date_end`, `time_raw`, `timezone`, `date_reported`, `date_posted`
@@ -73,12 +73,12 @@ Only UFOReportCtr is skipped at import time. Other overlaps are handled by the d
 - **Public Dataset Fields** (populated by `analyze.py`): `lat`, `lng`, `sighting_datetime`, `has_description`, `has_media`
 - **Emotion Classification** (populated by `emotions.py`): `emotion_28_dominant`, `emotion_28_group`, `emotion_7_dominant`, `vader_compound`, `roberta_sentiment`, `emotion_7_surprise`, `emotion_7_fear`, `emotion_7_neutral`, `emotion_7_anger`, `emotion_7_disgust`, `emotion_7_sadness`, `emotion_7_joy`
 
-**`sighting_analysis`** (614,505 rows) — Richer JSON-encoded derived fields, one row per sighting:
+**`sighting_analysis`** (618,316 rows) — Richer JSON-encoded derived fields, one row per sighting:
 - `behavior_tags` (JSON array), `color_list` (JSON array), `emotion_scores` (JSON object), `hoax_flags` (JSON array), `raw_shape_matched_via`
 
 **`location`** — Deduplicated locations with `raw_text`, `city`, `county`, `state`, `country`, `region`, `latitude`, `longitude`.
 
-**`source_database`** (5 rows) — UFOCAT, NUFORC, MUFON, UPDB, UFO-search.
+**`source_database`** (6 rows) — UFOCAT, NUFORC, MUFON, UPDB, UFO-search, r/UFOs.
 
 **`source_origin`** (31 rows) — Upstream sources within aggregator databases (Blue Book, NICAP, Hatch, etc.).
 
@@ -140,7 +140,7 @@ Applied automatically by `rebuild_db.py`:
 
 ## Deduplication Methodology
 
-Deduplication uses a **two-phase strategy**: known overlaps are eliminated at import time, then a three-tier matching engine flags remaining cross-source duplicates for review. **No records are deleted** — all 614,505 sightings remain in the database, with 126,730 candidate pairs stored in the `duplicate_candidate` table for downstream resolution.
+Deduplication uses a **two-phase strategy**: known overlaps are eliminated at import time, then a three-tier matching engine flags remaining cross-source duplicates for review. **No records are deleted** — all 618,316 sightings remain in the database, with 126,730 candidate pairs stored in the `duplicate_candidate` table for downstream resolution.
 
 ### Phase 1: Import-Time Filtering
 
@@ -152,7 +152,7 @@ Before deduplication even runs, two aggregator sources skip sub-sources that wou
 | **UPDB** | `name=MUFON` | 131,506 | MUFON imported directly with richer descriptions |
 | **UPDB** | `name=NUFORC` | 1,689,235 | NUFORC imported directly with richer descriptions |
 
-This eliminates **1,944,045 known duplicates** before dedup begins, reducing the working set from ~2.56M raw records to 614,505. The UFOCAT skip also triggers enrichment (see below) to preserve valuable Hynek/Vallee metadata.
+This eliminates **1,944,045 known duplicates** before dedup begins, reducing the working set from ~2.56M raw records to 614,505 (plus 3,811 from the r/UFOs Reddit ingest, for 618,316 total). The UFOCAT skip also triggers enrichment (see below) to preserve valuable Hynek/Vallee metadata.
 
 Other overlapping sub-sources (e.g. UFOCAT's Hatch records vs UFO-search's Hatch records) are kept and handled by the dedup engine, since both copies may carry unique metadata worth preserving.
 
@@ -257,7 +257,7 @@ Pairs with no description on either side receive score = 0.0 (these are still fl
 
 ### What Dedup Does NOT Do
 
-- **No records are deleted or merged**. The `duplicate_candidate` table is advisory. All 614,505 sightings remain queryable.
+- **No records are deleted or merged**. The `duplicate_candidate` table is advisory. All 618,316 sightings remain queryable.
 - **No within-source dedup**. The engine only flags cross-source pairs (different `source_db_id`). Duplicates within a single source (e.g. two NUFORC records for the same event) are not flagged.
 - **No transitive closure**. If A↔B and B↔C are both flagged, A↔C is NOT automatically inferred. Each pair is independent.
 - **Multiple witnesses are preserved**. If the same event has genuinely separate witness reports in different sources, both records remain. The similarity score helps distinguish true duplicates (high score) from independent reports of the same event (low score, different descriptions).
