@@ -37,7 +37,7 @@ import sqlite3
 import sys
 import time
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "output", "ufo_unified.db")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "output", "ufo_unified.db")
 BATCH_SIZE = 64          # GPU batch size (64 fits comfortably in 8GB VRAM)
 MAX_TEXT_LEN = 512       # Truncate text to this many chars before tokenization
 MIN_TEXT_LEN = 10        # Skip very short texts
@@ -401,6 +401,132 @@ def reset_emotions(db_path=DB_PATH):
 # ============================================================
 # CLI
 # ============================================================
+# CACHE / REPLAY — avoid re-running GPU inference on rebuilds
+# ============================================================
+
+EMOTION_CACHE_CSV = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "output", "emotion_classification_cache.csv"
+)
+
+def export_emotion_cache(db_path=DB_PATH, csv_path=EMOTION_CACHE_CSV):
+    """Export emotion columns to CSV for replay on future rebuilds."""
+    import csv as csv_mod
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, emotion_28_dominant, emotion_28_group, emotion_7_dominant,
+               vader_compound, roberta_sentiment,
+               emotion_7_surprise, emotion_7_fear, emotion_7_neutral,
+               emotion_7_anger, emotion_7_disgust, emotion_7_sadness, emotion_7_joy
+        FROM sighting WHERE emotion_28_dominant IS NOT NULL
+    """)
+    rows = cur.fetchall()
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv_mod.writer(f)
+        w.writerow([
+            "sighting_id", "emotion_28_dominant", "emotion_28_group", "emotion_7_dominant",
+            "vader_compound", "roberta_sentiment",
+            "emotion_7_surprise", "emotion_7_fear", "emotion_7_neutral",
+            "emotion_7_anger", "emotion_7_disgust", "emotion_7_sadness", "emotion_7_joy",
+        ])
+        w.writerows(rows)
+    size_mb = os.path.getsize(csv_path) / (1024 * 1024)
+    print(f"  Exported {len(rows):,} emotion records to {csv_path} ({size_mb:.1f} MB)")
+    conn.close()
+    return len(rows)
+
+
+def replay_emotion_cache(db_path=DB_PATH, csv_path=EMOTION_CACHE_CSV):
+    """
+    Re-apply cached emotion classifications without running GPU inference.
+
+    Matches by sighting_id. Only fills rows where emotion_28_dominant IS NULL.
+    On a fresh rebuild, sighting IDs are stable (same import order = same IDs),
+    so the cache maps directly.
+    """
+    import csv as csv_mod
+    if not os.path.exists(csv_path):
+        print(f"  No emotion cache found at {csv_path}")
+        print(f"  Run emotions.py with GPU first, then: python emotions.py --export-cache")
+        return 0
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    cur = conn.cursor()
+
+    # Check if already populated
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE emotion_28_dominant IS NOT NULL")
+    existing = cur.fetchone()[0]
+    if existing > 0:
+        print(f"  {existing:,} rows already have emotion data — skipping replay.")
+        conn.close()
+        return 0
+
+    print(f"\n=== Replaying cached emotion classifications ===\n")
+
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv_mod.DictReader(f)
+        batch = []
+        applied = 0
+        for row in reader:
+            try:
+                batch.append((
+                    row["emotion_28_dominant"] or None,
+                    row["emotion_28_group"] or None,
+                    row["emotion_7_dominant"] or None,
+                    float(row["vader_compound"]) if row["vader_compound"] else None,
+                    float(row["roberta_sentiment"]) if row["roberta_sentiment"] else None,
+                    float(row["emotion_7_surprise"]) if row["emotion_7_surprise"] else None,
+                    float(row["emotion_7_fear"]) if row["emotion_7_fear"] else None,
+                    float(row["emotion_7_neutral"]) if row["emotion_7_neutral"] else None,
+                    float(row["emotion_7_anger"]) if row["emotion_7_anger"] else None,
+                    float(row["emotion_7_disgust"]) if row["emotion_7_disgust"] else None,
+                    float(row["emotion_7_sadness"]) if row["emotion_7_sadness"] else None,
+                    float(row["emotion_7_joy"]) if row["emotion_7_joy"] else None,
+                    int(row["sighting_id"]),
+                ))
+            except (ValueError, KeyError):
+                continue
+
+            if len(batch) >= 5000:
+                cur.executemany("""
+                    UPDATE sighting SET
+                        emotion_28_dominant = ?, emotion_28_group = ?,
+                        emotion_7_dominant = ?, vader_compound = ?,
+                        roberta_sentiment = ?,
+                        emotion_7_surprise = ?, emotion_7_fear = ?,
+                        emotion_7_neutral = ?, emotion_7_anger = ?,
+                        emotion_7_disgust = ?, emotion_7_sadness = ?,
+                        emotion_7_joy = ?
+                    WHERE id = ? AND emotion_28_dominant IS NULL
+                """, batch)
+                applied += len(batch)
+                conn.commit()
+                print(f"\r  Applied: {applied:,}", end="")
+                batch = []
+
+        if batch:
+            cur.executemany("""
+                UPDATE sighting SET
+                    emotion_28_dominant = ?, emotion_28_group = ?,
+                    emotion_7_dominant = ?, vader_compound = ?,
+                    roberta_sentiment = ?,
+                    emotion_7_surprise = ?, emotion_7_fear = ?,
+                    emotion_7_neutral = ?, emotion_7_anger = ?,
+                    emotion_7_disgust = ?, emotion_7_sadness = ?,
+                    emotion_7_joy = ?
+                WHERE id = ? AND emotion_28_dominant IS NULL
+            """, batch)
+            applied += len(batch)
+            conn.commit()
+
+    print(f"\n  Replay complete: {applied:,} emotion records applied from cache")
+    conn.close()
+    return applied
+
+
+# ============================================================
 
 if __name__ == "__main__":
     import argparse
@@ -409,10 +535,16 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="GPU batch size")
     parser.add_argument("--stats-only", action="store_true", help="Print coverage stats only")
     parser.add_argument("--reset", action="store_true", help="Null emotion columns and re-run")
+    parser.add_argument("--export-cache", action="store_true", help="Export emotion data to CSV cache")
+    parser.add_argument("--replay", action="store_true", help="Replay cached emotions (no GPU needed)")
     args = parser.parse_args()
 
     if args.stats_only:
         print_stats(args.db)
+    elif args.export_cache:
+        export_emotion_cache(args.db)
+    elif args.replay:
+        replay_emotion_cache(args.db)
     elif args.reset:
         reset_emotions(args.db)
         run_emotions(args.db, args.batch_size)

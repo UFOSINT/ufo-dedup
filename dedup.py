@@ -22,7 +22,7 @@ import argparse
 import os
 from collections import defaultdict
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ufo_unified.db")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "output", "ufo_unified.db")
 
 # Source DB IDs (from source_database table)
 SRC_MUFON = 1

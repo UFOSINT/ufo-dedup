@@ -17,7 +17,7 @@ import re
 import time
 from collections import defaultdict
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "output", "ufo_unified.db")
 ENRICHMENT_PATH = os.path.join(os.path.dirname(__file__), "ufocat_enrichment.jsonl")
 
 

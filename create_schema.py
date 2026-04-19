@@ -4,7 +4,7 @@ Create the unified UFO sightings SQLite database schema.
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "output", "ufo_unified.db")
 
 def create_schema(db_path=DB_PATH):
     conn = sqlite3.connect(db_path)
@@ -187,7 +187,29 @@ def create_schema(db_path=DB_PATH):
         emotion_7_anger     REAL,
         emotion_7_disgust   REAL,
         emotion_7_sadness   REAL,
-        emotion_7_joy       REAL
+        emotion_7_joy       REAL,
+
+        -- v0.13 REDDIT / LLM FIELDS (populated by import_reddit.py)
+        reddit_post_id      TEXT UNIQUE,    -- Reddit post ID (e.g. '1abc23')
+        reddit_url          TEXT,           -- permalink
+        llm_confidence      TEXT,           -- high|medium|low
+        llm_anomaly_assessment TEXT,        -- anomalous|prosaic|ambiguous
+        llm_prosaic_candidate TEXT,         -- free text (e.g. 'Starlink')
+        llm_strangeness_rating INTEGER,     -- 1-5
+        llm_model           TEXT,           -- model used for extraction
+        has_photo            INTEGER,       -- 0 or 1
+        has_video            INTEGER,       -- 0 or 1
+
+        -- v0.14 LLM AUDIT FIELDS (populated by audit.py)
+        audit_status         TEXT,          -- pending|audited|skipped|error
+        audit_location_check TEXT,          -- match|mismatch|ambiguous|no_text
+        audit_location_fix   TEXT,          -- JSON: corrected city/state/country/lat/lng
+        audit_geocode_check  TEXT,          -- match|mismatch|no_coords
+        audit_data_extracted TEXT,          -- JSON: additional fields extracted from text
+        audit_quality_notes  TEXT,          -- LLM free-text quality assessment
+        audit_batch_id       INTEGER,       -- which batch processed this row
+        audit_model          TEXT,          -- LLM model used for audit
+        audit_timestamp      TEXT           -- when audited
     )
     """)
 
@@ -302,6 +324,24 @@ def create_schema(db_path=DB_PATH):
     """)
 
     # ==========================================
+    # AUDIT BATCH TRACKING
+    # ==========================================
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS audit_batch (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_type      TEXT NOT NULL,       -- 'geocode_verify' | 'location_normalize' | 'data_mine'
+        model           TEXT,                -- LLM model used
+        row_count       INTEGER,             -- rows in this batch
+        started_at      TEXT DEFAULT (datetime('now')),
+        completed_at    TEXT,
+        status          TEXT DEFAULT 'running',   -- running|completed|failed|cancelled
+        config          TEXT,                -- JSON: filters, thresholds used
+        summary         TEXT                 -- JSON: result stats
+    )
+    """)
+
+    # ==========================================
     # SENTIMENT ANALYSIS
     # ==========================================
 
@@ -378,6 +418,13 @@ def create_schema(db_path=DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_sighting_emo28 ON sighting(emotion_28_dominant)",
         "CREATE INDEX IF NOT EXISTS idx_sighting_emo28g ON sighting(emotion_28_group)",
         "CREATE INDEX IF NOT EXISTS idx_sighting_emo7 ON sighting(emotion_7_dominant)",
+        # v0.13 Reddit
+        "CREATE INDEX IF NOT EXISTS idx_sighting_reddit ON sighting(reddit_post_id)",
+        # v0.14 Audit
+        "CREATE INDEX IF NOT EXISTS idx_sighting_audit_status ON sighting(audit_status)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_audit_loc ON sighting(audit_location_check)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_audit_geo ON sighting(audit_geocode_check)",
+        "CREATE INDEX IF NOT EXISTS idx_sighting_audit_batch ON sighting(audit_batch_id)",
     ]
     for idx_sql in indexes:
         cur.execute(idx_sql)

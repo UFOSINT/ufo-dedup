@@ -1,0 +1,277 @@
+<!--
+  METHODOLOGY TAB CONTENT — v0.14
+  Drop this into ufosint-explorer/static/index.html
+  replacing the contents of <div id="panel-methodology" class="panel">
+
+  Updated: 2026-04-19
+  Changes from previous version:
+    - 618,316 sightings (was 614,505)
+    - 6 sources (added r/UFOs Reddit)
+    - New section: LLM-Powered Data Quality Pipeline
+    - New section: Geocoding Audit (29K bad pins fixed, 49K locations normalized)
+    - Updated quality score formula (now includes LLM-extracted fields)
+    - Updated coverage numbers throughout
+    - Added duration parsing stats (232K bucketed, was ~1K)
+    - Updated download banner (628 MB, was 508 MB)
+-->
+
+<div class="methodology">
+
+    <h2>Unified UFO Sightings Database &mdash; Methodology</h2>
+    <p class="meth-intro"><strong>This is not raw data.</strong> UFOSINT Explorer presents a <strong>processed scientific analysis</strong> of six major UFO/UAP databases &mdash; 618,316 sighting records deduplicated, cross-referenced, geocode-verified, quality-scored, LLM-enriched, movement-classified, and emotion-analyzed using four transformer models. Every step of the pipeline is documented below and can be independently replicated from the source data using the open-source <a href="https://github.com/UFOSINT/ufo-dedup" target="_blank" rel="noopener">ufo-dedup</a> pipeline. The web application source code is at <a href="https://github.com/UFOSINT/ufosint-explorer" target="_blank" rel="noopener">ufosint-explorer</a>.</p>
+
+    <div class="meth-download-banner">
+        <strong>Download the full database</strong>
+        The 628&nbsp;MB SQLite snapshot (<code>ufo_public.db</code>) is attached to every tagged release.
+        <a href="https://github.com/UFOSINT/ufosint-explorer/releases/latest/download/ufo_public.db" class="meth-download-link">Download latest</a>
+        &middot;
+        <a href="https://github.com/UFOSINT/ufosint-explorer/releases" target="_blank" rel="noopener">Browse releases</a>
+    </div>
+
+    <div class="meth-banner meth-banner-note">
+        <strong>Reproducibility statement.</strong>
+        The entire database can be rebuilt from source files
+        with a single command (<code>python rebuild_db.py</code>).
+        All data quality fixes are idempotent and preserve
+        original values. LLM-derived enrichments are cached to CSV files
+        and replayed deterministically on rebuilds &mdash; no API key
+        is needed for reproduction. Derived columns (quality scores,
+        movement categories, emotion classifications) are
+        computed deterministically from the raw narratives.
+        No records are deleted &mdash; duplicates are flagged,
+        not merged.
+    </div>
+
+    <!-- ============ Pipeline Overview ============ -->
+    <h3>Pipeline Architecture</h3>
+    <p>The 17-step pipeline transforms ~2.56 million raw records from 6 sources into a unified, analysis-ready database:</p>
+
+    <div class="meth-pipeline-diagram">
+        <pre style="font-family: monospace; font-size: 0.85em; line-height: 1.4; background: var(--bg-card, #1a1a2e); padding: 1.2em; border-radius: 8px; overflow-x: auto;">
+Raw Data (5 CSVs + 1 JSON + Reddit CSV)
+    |
+    v
+rebuild_db.py  (17 steps, ~30 min)
+    |
+    +-- Steps 1-7:    Import 6 sources (618,316 sightings)
+    +-- Step 8:       SQL data quality fixes (~30 corrections)
+    +-- Step 9:       Geocode pass 1 (GeoNames offline gazetteer)
+    +-- Step 10:      Audit: fix bad geocodes + replay LLM location fixes
+    +-- Step 11:      Geocode pass 2 (picks up audit-improved locations)
+    +-- Steps 12-14:  Enrich, dedup, sentiment analysis
+    +-- Step 15:      Derived analysis (shapes, quality, duration, hoax)
+    +-- Step 16:      Replay cached enrichments (emotions, LLM extractions)
+    +-- Step 17:      Export
+    |
+    v
+ufo_public.db  (618,316 sightings, 100 columns, 628 MB)
+        </pre>
+    </div>
+
+    <!-- ============ Source Databases ============ -->
+    <h3>Source Databases</h3>
+    <table>
+        <thead>
+            <tr><th>Source</th><th>Raw Records</th><th>Imported</th><th>Skipped</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><span class="source-badge" style="background:#4e79a7">UFOCAT</span></td>
+                <td>320,412</td><td>197,108</td><td>123,304</td>
+                <td>CUFOS UFOCAT 2023 catalog. Richest metadata: Hynek/Vallee classifications, lat/lon, witness counts, durations. 123K NUFORC-origin records (<code>SOURCE=UFOReportCtr</code>) skipped; metadata transferred via enrichment.</td>
+            </tr>
+            <tr>
+                <td><span class="source-badge" style="background:#f28e2b">NUFORC</span></td>
+                <td>159,320</td><td>159,320</td><td>0</td>
+                <td>National UFO Reporting Center. Self-reported sightings with detailed free-text descriptions. Enriched post-import with 102K Hynek and 83K Vallee classifications from UFOCAT.</td>
+            </tr>
+            <tr>
+                <td><span class="source-badge" style="background:#e15759">MUFON</span></td>
+                <td>138,310</td><td>138,310</td><td>0</td>
+                <td>Mutual UFO Network case reports. Short + long descriptions, investigator summaries.</td>
+            </tr>
+            <tr>
+                <td><span class="source-badge" style="background:#76b7b2">UPDB</span></td>
+                <td>1,885,757</td><td>65,016</td><td>1,820,741</td>
+                <td>Unified Phenomena Database (phenomenAInon). 1.82M rows skipped (MUFON/NUFORC already imported from richer originals). Remaining 65K from UFODNA (38K), Blue Book (14K), NICAP (5.8K), etc.</td>
+            </tr>
+            <tr>
+                <td><span class="source-badge" style="background:#59a14f">UFO-search</span></td>
+                <td>54,751</td><td>54,751</td><td>0</td>
+                <td>Majestic Timeline compilation from ufo-search.com. Historical records from 19 source compilations (Hatch, Eberhart, NICAP, Vallee, etc.).</td>
+            </tr>
+            <tr>
+                <td><span class="source-badge" style="background:#9c755f">r/UFOs</span></td>
+                <td>3,811</td><td>3,811</td><td>0</td>
+                <td>Reddit r/UFOs community sighting reports. Three-pass pipeline: API scraping, LLM-structured extraction (Gemini Flash), database import. Includes anomaly assessments and strangeness ratings.</td>
+            </tr>
+        </tbody>
+    </table>
+    <p><strong>Total raw records across all sources: ~2.56 million.</strong> After removing known overlaps at import time: <strong>618,316</strong>.</p>
+
+    <!-- ============ LLM Data Quality ============ -->
+    <h3>LLM-Powered Data Quality Pipeline</h3>
+    <p>After initial import and geocoding, the pipeline runs an AI-powered data quality audit using Google Gemini Flash. Results are cached for deterministic replay on future rebuilds.</p>
+
+    <table>
+        <thead>
+            <tr><th>Audit Tier</th><th>What It Does</th><th>Records</th><th>Method</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Tier A: Geocode Verification</strong></td>
+                <td>Detects map pins in the wrong country/hemisphere (e.g., "Nelson, Nebraska" geocoded to New Zealand)</td>
+                <td>29,029 fixed</td>
+                <td>Code: US/CA state bounding-box validation</td>
+            </tr>
+            <tr>
+                <td><strong>Tier B: Location Normalization</strong></td>
+                <td>Cleans 120K messy location strings for re-geocoding (e.g., "Toronto (Canada)" &rarr; city=Toronto, state=ON, country=CA)</td>
+                <td>49,190 improved</td>
+                <td>LLM: Gemini Flash, cached to CSV</td>
+            </tr>
+            <tr>
+                <td><strong>Field Extraction</strong></td>
+                <td>Extracts shape, color, duration, witnesses, sound, and direction from narrative descriptions that had missing structured fields</td>
+                <td>297,446 enriched</td>
+                <td>LLM: Gemini Flash, cached to CSV</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <p><strong>Impact:</strong> +48,503 new correct map pins, +38,347 records above the quality threshold, 574,269 new structured field values extracted from text.</p>
+
+    <!-- ============ Geocoding ============ -->
+    <h3>Geocoding</h3>
+    <p>Locations are geocoded offline using the <a href="https://www.geonames.org/" target="_blank" rel="noopener">GeoNames</a> gazetteer (cities with population &ge;15,000). Three matching strategies with decreasing specificity:</p>
+    <ol>
+        <li><strong>Exact:</strong> city + state + country &rarr; coordinates (highest confidence)</li>
+        <li><strong>City + country:</strong> ignores state, picks largest city by population</li>
+        <li><strong>City only:</strong> global lookup, <strong>prefers matches in the expected country</strong> when a US/CA state code is present (v0.14 fix &mdash; prevents wrong-continent matches)</li>
+    </ol>
+    <p><strong>Coverage:</strong> 418,077 of 618,316 sightings (67.6%) have map coordinates. Two geocoding passes run: before and after the LLM location audit.</p>
+
+    <!-- ============ Quality Score ============ -->
+    <h3>Quality Score (0&ndash;100)</h3>
+    <p>Every sighting receives a quality score based on the richness and completeness of its data. Higher scores indicate more detailed, verifiable reports.</p>
+
+    <table>
+        <thead><tr><th>Feature</th><th>Points</th><th>Notes</th></tr></thead>
+        <tbody>
+            <tr><td>Description length</td><td>0 / 5 / 15 / 25</td><td>None / &lt;50 / &lt;200 / 200+ characters</td></tr>
+            <tr><td>Has media (photo/video)</td><td>+15</td><td></td></tr>
+            <tr><td>Number of witnesses</td><td>0 / 5 / 10 / 15</td><td>0 / 1 / 2 / 3+</td></tr>
+            <tr><td>Movement mentioned</td><td>+10 (+5 bonus)</td><td>+5 if 2+ movement categories detected</td></tr>
+            <tr><td>9 structured fields</td><td>3 pts each (max 27)</td><td>time, shape, color, duration, sound, direction, elevation, Hynek, Vallee</td></tr>
+            <tr><td>Coordinates present</td><td>+5</td><td></td></tr>
+            <tr><td>Specificity bonus</td><td>+5</td><td>Time-of-day, compass direction, or altitude in description</td></tr>
+            <tr><td>Unknown-date cap</td><td>min(score, 15)</td><td>Relaxed to 35 if 8+ features and has description</td></tr>
+        </tbody>
+    </table>
+    <p><strong>Distribution:</strong> 160,728 sightings (26%) score &ge;60. Average score: 42.3. The structured fields row is where LLM extraction has the biggest impact &mdash; each newly extracted field adds 3 points.</p>
+
+    <!-- ============ Shape Normalization ============ -->
+    <h3>Shape Normalization</h3>
+    <p>Raw shape strings from 6 sources are normalized to 28 canonical shapes using a three-tier matcher:</p>
+    <ol>
+        <li><strong>Exact match</strong> against canonical list (286,826 matches)</li>
+        <li><strong>Substring/alias match</strong> against 70+ extended mappings &mdash; e.g., "ovoid" &rarr; Oval, "V-shape" &rarr; Chevron, "torpedo" &rarr; Cigar (52,448 matches)</li>
+        <li><strong>Fuzzy match</strong> via rapidfuzz at &ge;85% similarity (41 matches)</li>
+    </ol>
+    <p><strong>28 canonical shapes:</strong> Sphere, Disc, Triangle, Cigar, Oval, Circle, Light, Fireball, Cylinder, Diamond, Rectangle, Chevron, Cross, Teardrop, Star, Egg, Cone, Cube, Saucer, Boomerang, Flash, Formation, Changing, Crescent, Cloud, Dome, Unknown, Other.</p>
+    <p><strong>Coverage:</strong> 343,602 sightings (55.6%) have a standardized shape.</p>
+
+    <!-- ============ Duration ============ -->
+    <h3>Duration Parsing</h3>
+    <p>Raw duration strings are parsed to seconds using a multi-strategy parser:</p>
+    <ul>
+        <li>Natural language: "5 minutes" &rarr; 300s, "about 2 hours" &rarr; 7200s</li>
+        <li>UFOCAT codes: "B" (brief) &rarr; 3s, "M" (medium) &rarr; 120s, "H" (hour) &rarr; 3600s</li>
+        <li>Bare numbers: "5" &rarr; 300s (UFOCAT convention: decimal minutes)</li>
+        <li>Ranges: "5-10 minutes" &rarr; 450s (midpoint)</li>
+    </ul>
+    <p>Parsed durations are bucketed: <strong>instant</strong> (&lt;5s), <strong>seconds</strong> (&lt;60s), <strong>minutes</strong> (&lt;1h), <strong>hours</strong> (&lt;24h), <strong>days</strong> (&ge;24h).</p>
+    <p><strong>Coverage:</strong> 232,438 sightings (37.6%) have parsed durations.</p>
+
+    <!-- ============ Emotion Classification ============ -->
+    <h3>Emotion &amp; Sentiment Analysis</h3>
+    <p>Four models classify the emotional content of sighting narratives:</p>
+
+    <table>
+        <thead><tr><th>Model</th><th>Output</th><th>Coverage</th></tr></thead>
+        <tbody>
+            <tr>
+                <td><a href="https://huggingface.co/SamLowe/roberta-base-go_emotions" target="_blank" rel="noopener">GoEmotions 28-class</a></td>
+                <td>Dominant emotion label + sentiment group (positive/negative/ambiguous/neutral)</td>
+                <td>506,788</td>
+            </tr>
+            <tr>
+                <td><a href="https://huggingface.co/j-hartmann/emotion-english-distilroberta-base" target="_blank" rel="noopener">7-class RoBERTa</a></td>
+                <td>Emotion label (surprise/fear/neutral/anger/disgust/sadness/joy) + full softmax probabilities</td>
+                <td>506,788</td>
+            </tr>
+            <tr>
+                <td><a href="https://huggingface.co/cardiffnlp/twitter-roberta-base-sentiment-latest" target="_blank" rel="noopener">RoBERTa Sentiment</a></td>
+                <td>Compound sentiment score (-1.0 to +1.0)</td>
+                <td>506,788</td>
+            </tr>
+            <tr>
+                <td>VADER + NRC Lexicon</td>
+                <td>VADER compound score + 10 NRC emotion word counts (joy, fear, anger, sadness, surprise, disgust, trust, anticipation, positive, negative)</td>
+                <td>506,788</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- ============ Nuclear Proximity ============ -->
+    <h3>Nuclear Proximity Analysis</h3>
+    <p>Haversine distance computed from every geocoded sighting to the nearest of 50 nuclear-relevant facilities (military bases, national labs, nuclear test sites, weapons storage areas).</p>
+    <p><strong>Results:</strong> 35,203 sightings within 50 km of a nuclear site. 69,912 within 100 km.</p>
+    <p>Supplemented by 14 crash-retrieval cases and 35 nuclear encounter records from the UAP Gerb research bundle.</p>
+
+    <!-- ============ Movement ============ -->
+    <h3>Movement &amp; Behavior Classification</h3>
+    <p>Regex-based extraction from narrative text identifies 10 movement categories and 14 behavior tags:</p>
+    <ul>
+        <li><strong>Movement:</strong> hovering, linear, erratic, accelerating, rotating, ascending, descending, vanished, followed, landed</li>
+        <li><strong>Behavior:</strong> hovering, silent, bright, pulsing, rotating, zigzag, vanished, accelerated, split, merged, formation, chased, followed, landed</li>
+    </ul>
+    <p><strong>Coverage:</strong> 250,820 sightings (40.6%) have at least one movement category.</p>
+
+    <!-- ============ Deduplication ============ -->
+    <h3>Cross-Source Deduplication</h3>
+    <p>A three-tier engine flags potential duplicates across sources. <strong>No records are deleted</strong> &mdash; duplicates are flagged for review.</p>
+    <table>
+        <thead><tr><th>Tier</th><th>Method</th><th>Pairs Flagged</th></tr></thead>
+        <tbody>
+            <tr><td>1</td><td>MUFON &harr; NUFORC: date + city + state exact match</td><td>~48K</td></tr>
+            <tr><td>2</td><td>All remaining cross-source pairs: date + city + state</td><td>~69K</td></tr>
+            <tr><td>3</td><td>Date-only matches with description fuzzy similarity &ge;60%</td><td>~10K</td></tr>
+        </tbody>
+    </table>
+    <p><strong>Total:</strong> 126,729 duplicate candidate pairs across 618,316 sightings.</p>
+
+    <!-- ============ Content Policy ============ -->
+    <h3>Content Policy &amp; Privacy</h3>
+    <p>The public database (<code>ufo_public.db</code>) contains <strong>only derived, non-copyrighted fields</strong>. Raw narrative text from NUFORC, MUFON, UFOCAT, UPDB, and UFO-search is stripped during export. Reddit sighting descriptions are LLM-generated summaries (transformative derivative works), not original Reddit posts.</p>
+    <p>No personally identifiable information (PII) is published. The <code>witness_names</code> column is NULL in the public export.</p>
+
+    <!-- ============ How to Reproduce ============ -->
+    <h3>How to Reproduce This Database</h3>
+    <div class="meth-banner">
+        <strong>Full instructions:</strong>
+        <a href="https://github.com/UFOSINT/ufo-dedup/blob/main/docs/PIPELINE.md" target="_blank" rel="noopener">docs/PIPELINE.md</a>
+        in the ufo-dedup repository.
+    </div>
+    <pre style="font-family: monospace; font-size: 0.85em; background: var(--bg-card, #1a1a2e); padding: 1em; border-radius: 8px;">
+pip install -r requirements-etl.txt
+python geocode.py --download              # one-time gazetteer (~30 MB)
+python rebuild_db.py                       # 17-step pipeline (~30 min)
+python emotions.py                         # GPU emotion classification (~35 min)
+python run_enrich.py --limit 378000        # LLM field extraction (~$8, optional)
+python run_enrich.py --apply               # apply extractions to DB
+python export_public.py                    # clean public export
+    </pre>
+    <p>LLM-derived results (location normalization, field extraction, emotion classification) are cached to CSV files in <code>data/output/</code> and replayed automatically on future rebuilds without re-calling APIs or re-running GPU inference.</p>
+
+</div>

@@ -24,7 +24,7 @@ import os
 import sqlite3
 import sys
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "output", "ufo_unified.db")
 CSV_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "data", "raw", "reddit", "reddit_sightings_extracted.csv",

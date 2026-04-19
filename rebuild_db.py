@@ -1,28 +1,30 @@
 """
 Master rebuild script for the Unified UFO Sightings Database.
 
-Orchestrates the full pipeline:
-  1. Create fresh schema
-  2. Import all 5 sources (UFOCAT skips UFOReportCtr)
-  3. Apply data quality fixes:
-     - UFOCAT longitude sign inversion
-     - UFOCAT city from raw_text
-     - Country code normalization (USA→US, UK→GB, etc.)
-     - MUFON date \n artifacts (date_event_raw and date_event)
-     - MUFON year-0000 and negative-year date nullification
-     - Shape normalization (case folding, typo fixes, junk removal)
-     - Hynek/Vallee code uppercasing
-     - [MISSING DATA] description cleanup
-     - MUFON razor boilerplate stripping
-  4. Geocode locations using GeoNames gazetteer
-  5. Enrich NUFORC records with UFOCAT metadata
-  6. Run deduplication
-  7. Copy to explorer
+Orchestrates the full pipeline from raw source data to analysis-ready DB:
+  1.  Create fresh schema
+  2.  Import UFOCAT (skips UFOReportCtr -> enrichment sidecar)
+  3.  Import NUFORC
+  4.  Import MUFON
+  5.  Import UPDB (skips MUFON/NUFORC duplicates)
+  6.  Import UFO-search (Geldreich Majestic Timeline)
+  7.  Import Reddit r/UFOs (LLM-extracted sighting reports)
+  8.  Apply data quality fixes (~30 SQL updates)
+  9.  Geocode locations (GeoNames gazetteer, pass 1)
+  10. Audit: fix bad geocodes + replay cached LLM location fixes
+  11. Geocode locations (pass 2 — picks up audit-improved locations)
+  12. Enrich NUFORC with UFOCAT Hynek/Vallee metadata
+  13. Deduplication (3-tier cross-source matching)
+  14. Sentiment analysis (VADER + NRC)
+  15. Derived analysis (shape, quality, hoax, etc.)
+  16. Copy to explorer
 
 Usage:
-    python rebuild_db.py              # Full rebuild
-    python rebuild_db.py --skip-dedup # Skip dedup (faster for testing)
-    python rebuild_db.py --skip-geocode # Skip geocoding step
+    python rebuild_db.py                # Full rebuild (~30 min)
+    python rebuild_db.py --skip-dedup   # Skip dedup (faster for testing)
+    python rebuild_db.py --skip-geocode # Skip geocoding steps
+    python rebuild_db.py --skip-audit   # Skip audit pipeline
+    python rebuild_db.py --skip-reddit  # Skip Reddit import
 """
 import os
 import sys
@@ -31,7 +33,7 @@ import sqlite3
 import argparse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "ufo_unified.db")
+DB_PATH = os.path.join(BASE_DIR, "data", "output", "ufo_unified.db")
 EXPLORER_DB = os.path.join(BASE_DIR, "ufo-explorer", "ufo_unified.db")
 
 # US states + Canadian provinces for longitude fix
@@ -333,6 +335,8 @@ def main():
     parser.add_argument('--skip-explorer', action='store_true', help='Skip explorer DB copy')
     parser.add_argument('--skip-sentiment', action='store_true', help='Skip sentiment analysis step')
     parser.add_argument('--skip-analysis', action='store_true', help='Skip derived analysis step')
+    parser.add_argument('--skip-audit', action='store_true', help='Skip audit pipeline (geocode fix + LLM replay)')
+    parser.add_argument('--skip-reddit', action='store_true', help='Skip Reddit r/UFOs import')
     args = parser.parse_args()
 
     overall_t0 = time.time()
@@ -362,44 +366,93 @@ def main():
     step(5, "Import UPDB (skips MUFON/NUFORC)")
     run_script('import_updb')
 
-    step(6, "Import UFO-search (was Geldreich)")
+    step(6, "Import UFO-search (Geldreich)")
     run_script('import_geldreich')
 
-    step(7, "Apply data quality fixes")
+    if not args.skip_reddit:
+        step(7, "Import Reddit r/UFOs")
+        import import_reddit
+        csv_path = import_reddit.CSV_PATH
+        if os.path.exists(csv_path):
+            import_reddit.run_import()
+        else:
+            print(f"  Reddit CSV not found at {csv_path} — skipping.")
+            print(f"  (Run scrape_reddit.py + extract_reddit.py first to generate it.)")
+    else:
+        print("\n  Skipping Reddit import (--skip-reddit)")
+
+    step(8, "Apply data quality fixes")
     apply_data_fixes()
 
     if not args.skip_geocode:
-        step(8, "Geocode locations (GeoNames)")
+        step(9, "Geocode locations (GeoNames) — pass 1")
         import geocode
         geocode.run_geocoding()
     else:
         print("\n  Skipping geocoding (--skip-geocode)")
 
-    step(9, "Enrich NUFORC with UFOCAT metadata")
+    if not args.skip_audit:
+        step(10, "Audit: fix bad geocodes + replay cached LLM location fixes")
+        import audit
+        audit.run_audit_pipeline()
+
+        if not args.skip_geocode:
+            step(11, "Geocode locations (GeoNames) — pass 2 (audit-improved)")
+            geocode.run_geocoding()
+    else:
+        print("\n  Skipping audit pipeline (--skip-audit)")
+
+    step(12, "Enrich NUFORC with UFOCAT metadata")
     run_script('enrich')
 
     if not args.skip_dedup:
-        step(10, "Deduplication")
+        step(13, "Deduplication")
         run_script('dedup')
     else:
         print("\n  Skipping deduplication (--skip-dedup)")
 
     if not args.skip_sentiment:
-        step(11, "Sentiment analysis (VADER + NRC)")
+        step(14, "Sentiment analysis (VADER + NRC)")
         import sentiment
         sentiment.run_sentiment()
     else:
         print("\n  Skipping sentiment analysis (--skip-sentiment)")
 
     if not args.skip_analysis:
-        step(12, "Derived analysis (shape, quality, hoax, etc.)")
+        step(15, "Derived analysis (shape, quality, hoax, etc.)")
         import analyze
         analyze.run_analysis()
     else:
         print("\n  Skipping derived analysis (--skip-analysis)")
 
+    step(16, "Replay cached enrichments (emotions, LLM extractions)")
+    # Replay emotion cache (no GPU needed — uses cached CSV)
+    import emotions
+    if os.path.exists(emotions.EMOTION_CACHE_CSV):
+        emotions.replay_emotion_cache()
+    else:
+        print("  No emotion cache found — run `python emotions.py` with GPU to generate")
+
+    # Replay LLM field extractions (no API key needed — uses cached CSV)
+    llm_extract_csv = os.path.join(BASE_DIR, "data", "output", "llm_field_extractions.csv")
+    if os.path.exists(llm_extract_csv):
+        print("  Replaying LLM field extractions...")
+        import run_enrich
+        run_enrich.apply_extractions()
+    else:
+        print("  No LLM extraction cache found — run `python run_enrich.py` to generate")
+
+    # Re-run Gerb overlay (nuclear proximity + NRC denormalization)
+    gerb_bundle = os.path.join(BASE_DIR, "..", "uap-gerb-integration-bundle.zip")
+    if os.path.exists(gerb_bundle):
+        print("  Running Gerb overlay (nuclear proximity)...")
+        import gerb_overlay
+        gerb_overlay.run_gerb_overlay()
+    else:
+        print("  No Gerb bundle found — skipping nuclear proximity")
+
     if not args.skip_explorer:
-        step(13, "Copy to explorer")
+        step(17, "Copy to explorer")
         copy_to_explorer()
     else:
         print("\n  Skipping explorer copy (--skip-explorer)")
@@ -476,6 +529,15 @@ def main():
           f"has_description={public_desc:,}, has_media={public_media:,}")
     print(f"  Movement/dates:   has_movement={public_mov:,}, "
           f"date-capped (unknown date): {date_capped:,}")
+
+    # Audit results
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE audit_geocode_check = 'mismatch'")
+    audit_bad = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM sighting WHERE audit_location_check = 'normalized'")
+    audit_fixed = cur.fetchone()[0]
+    if audit_bad or audit_fixed:
+        print(f"  Audit:            bad_geocodes_fixed={audit_bad:,}, "
+              f"locations_normalized={audit_fixed:,}")
 
     conn.close()
 

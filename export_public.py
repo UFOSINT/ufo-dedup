@@ -41,8 +41,8 @@ import sys
 import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_SOURCE = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "output", "ufo_unified.db"))
-DEFAULT_TARGET = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "output", "ufo_public.db"))
+DEFAULT_SOURCE = os.path.join(BASE_DIR, "data", "output", "ufo_unified.db")
+DEFAULT_TARGET = os.path.join(BASE_DIR, "data", "output", "ufo_public.db")
 
 
 # Columns to drop from `sighting` on the public copy. Keep in sync with

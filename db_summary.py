@@ -2,7 +2,7 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "output", "ufo_unified.db")
 
 conn = sqlite3.connect(DB_PATH)
 cur = conn.cursor()

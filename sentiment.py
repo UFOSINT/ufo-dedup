@@ -15,7 +15,7 @@ import os
 import sys
 import time
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "output", "ufo_unified.db")
 BATCH_SIZE = 5000
 MIN_TEXT_LENGTH = 10
 

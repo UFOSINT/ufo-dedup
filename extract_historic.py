@@ -11,7 +11,7 @@ Usage:
 import sqlite3
 import os
 
-SRC_DB = "ufo_unified.db"
+SRC_DB = os.path.join("data", "output", "ufo_unified.db")
 DST_DB = os.path.join("temp", "historic_pre1901.db")
 CUTOFF_YEAR = 1901
 

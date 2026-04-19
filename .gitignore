@@ -3,26 +3,41 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Data files (too large for git) — README.md files are tracked anywhere
+# Data files (too large for git)
+# README.md files are tracked everywhere — they ARE the scaffolding
 *.db
 *.db-wal
 *.db-shm
 *.csv
 *.jsonl
-*.json
 *.accdb
 *.zip
 *.gz
 *.parquet
+*.xlsx
 
-# Environment
+# JSON files (source data, LLM extraction cache)
+*.json
+# But keep specific config files if needed:
+# !some_config.json
+
+# Environment / secrets
 .env
 
 # The legacy in-repo Flask GUI prototype (replaced by ufosint-explorer)
 ufo-explorer/
 
-# GeoNames gazetteer data (downloaded at build time, ~10 MB extracted)
+# GeoNames gazetteer data (downloaded at build time, ~30 MB extracted)
 geodata/
+
+# Reddit raw scrape data (large, per-post JSON files)
+data/raw/reddit/raw/
+data/raw/reddit/extracted/
+
+# Model weights (downloaded from HuggingFace at runtime)
+data/models/*.bin
+data/models/*.pt
+data/models/*.safetensors
 
 # Build / run logs
 *.log
@@ -30,3 +45,4 @@ geodata/
 # Misc
 nul
 *.png
+*.tmp

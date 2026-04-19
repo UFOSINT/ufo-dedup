@@ -39,7 +39,7 @@ import json
 import time
 from collections import Counter
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "output", "ufo_unified.db")
 BATCH_SIZE = 5000
 
 
@@ -48,16 +48,20 @@ BATCH_SIZE = 5000
 # ============================================================
 
 # Canonical shapes — used for fuzzy matching raw shape strings.
+# v0.14: added Crescent, Cloud, Dome from the extended shape audit.
 CANONICAL_SHAPES = [
     "Sphere", "Disc", "Triangle", "Cigar", "Oval", "Circle", "Light",
     "Fireball", "Cylinder", "Diamond", "Rectangle", "Chevron", "Cross",
     "Teardrop", "Star", "Egg", "Cone", "Cube", "Saucer", "Boomerang",
-    "Flash", "Formation", "Changing", "Unknown", "Other",
+    "Flash", "Formation", "Changing", "Crescent", "Cloud", "Dome",
+    "Unknown", "Other",
 ]
 
-# Substring hints for shapes that won't fuzzy-match the canonical token directly
-# (e.g. "triangular" -> "Triangle", "disc-shaped" -> "Disc").
+# Substring hints for shapes that won't fuzzy-match the canonical token directly.
+# v0.14: expanded with UFOCAT abbreviated forms and common synonyms from the
+# shape audit (enrich_free_wins.py --preview). Covers 14K+ previously-unmapped shapes.
 SHAPE_SUBSTRING_HINTS = {
+    # Original mappings
     "triangular": "Triangle",
     "triangle": "Triangle",
     "disc": "Disc",
@@ -91,6 +95,73 @@ SHAPE_SUBSTRING_HINTS = {
     "formation": "Formation",
     "changing": "Changing",
     "unknown": "Unknown",
+    # v0.14 extended mappings — UFOCAT abbreviated forms + common synonyms
+    "ovoid": "Oval",
+    "ellipse": "Oval",
+    "elliptic": "Oval",
+    "football": "Oval",
+    "oblong": "Cigar",
+    "elongate": "Cigar",
+    "torpedo": "Cigar",
+    "bullet": "Cigar",
+    "fuselage": "Cigar",
+    "linear": "Cigar",
+    "blimp": "Cigar",
+    "airship": "Cigar",
+    "banana": "Cigar",
+    "spike": "Cigar",
+    "rod": "Cigar",
+    "stick": "Cigar",
+    "cigar-shaped": "Cigar",
+    "rectangl": "Rectangle",
+    "box": "Rectangle",
+    "trapezoid": "Rectangle",
+    "flat": "Disc",
+    "hat": "Disc",
+    "saturn": "Disc",
+    "disc-shaped": "Disc",
+    "saucer-shaped": "Saucer",
+    "v-shape": "Chevron",
+    "v-form": "Chevron",
+    "v-shaped": "Chevron",
+    "v shaped": "Chevron",
+    "arrow": "Chevron",
+    "mantaray": "Chevron",
+    "horseshoe": "Chevron",
+    "delta": "Triangle",
+    "pyramid": "Triangle",
+    "wedge": "Triangle",
+    "formatn": "Formation",
+    "polymorf": "Changing",
+    "blob": "Changing",
+    "amorphous": "Changing",
+    "crescent": "Crescent",
+    "cloud": "Cloud",
+    "dome": "Dome",
+    "mushroom": "Dome",
+    "top": "Cone",
+    "bell": "Cone",
+    "conical": "Cone",
+    "ring": "Circle",
+    "wheel": "Circle",
+    "semi-circle": "Circle",
+    "semicircle": "Circle",
+    "half-circle": "Circle",
+    "pellet": "Sphere",
+    "acorn": "Egg",
+    "egg-shaped": "Egg",
+    "pear": "Teardrop",
+    "tear-drop": "Teardrop",
+    "tear drop": "Teardrop",
+    "point": "Light",
+    "dot": "Light",
+    "beam": "Light",
+    "barrel": "Cylinder",
+    "rocket": "Cylinder",
+    "hexagon": "Diamond",
+    "pentagon": "Diamond",
+    "polygon": "Diamond",
+    "boomerang-shaped": "Boomerang",
 }
 
 # Behavior keyword -> tag name
@@ -811,9 +882,116 @@ def run_topic_modeling(conn):
 # 8. Duration bucketing
 # ============================================================
 
+# ---- Duration text parser (v0.14) ----
+
+# UFOCAT single-letter duration codes
+_UFOCAT_DURATION_CODES = {
+    "I": 0, "B": 3, "S": 15, "M": 120, "L": 1800, "E": 7200,
+    "F": 1, "H": 3600, "SH": 1800, ".F": 1, ".S": 10, ".M": 60, ".B": 2,
+    "2H": 7200, "3H": 10800, "4H": 14400, "5H": 18000, "6H": 21600,
+    "+H": 3600, "+M": 300, "+L": 3600,
+}
+
+_UNIT_SECS = {
+    "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
+    "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
+    "h": 3600, "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600,
+    "d": 86400, "day": 86400, "days": 86400,
+}
+
+def _lookup_unit(raw):
+    """Normalize a unit string to seconds multiplier."""
+    key = raw.lower().rstrip("s.").strip()
+    return _UNIT_SECS.get(key, _UNIT_SECS.get(raw.lower().strip(), 60))
+
+_DURATION_PATTERNS = [
+    # "5 minutes", "30 seconds", "1.5 hours", "2-3 minutes" (take first number)
+    (re.compile(r'^(\d+(?:\.\d+)?)\s*[-\u2013to]*\s*\d*\s*(seconds?|secs?|sec|minutes?|mins?|min|hours?|hrs?|hr|days?)\.?\s*[+]?$', re.I),
+     lambda m: float(m.group(1)) * _lookup_unit(m.group(2))),
+    # "about 5 minutes", "~20 minutes"
+    (re.compile(r'^(?:about|approximately|approx\.?|~|around|roughly|maybe|est\.?|over|under|less than|more than)\s*(\d+(?:\.\d+)?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\.?\s*[+]?$', re.I),
+     lambda m: float(m.group(1)) * _lookup_unit(m.group(2))),
+    # "a few minutes", "several seconds"
+    (re.compile(r'^(?:a\s+)?few\s+(seconds?|minutes?|hours?)', re.I),
+     lambda m: 3 * _lookup_unit(m.group(1))),
+    (re.compile(r'^several\s+(seconds?|minutes?|hours?)', re.I),
+     lambda m: 5 * _lookup_unit(m.group(1))),
+    (re.compile(r'^(?:a\s+)?couple\s+(?:of\s+)?(seconds?|minutes?|hours?)', re.I),
+     lambda m: 2 * _lookup_unit(m.group(1))),
+    # "1-2 min", "5-10 secs"
+    (re.compile(r'^(\d+)\s*[-\u2013]\s*(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)\.?', re.I),
+     lambda m: ((int(m.group(1)) + int(m.group(2))) / 2) * _lookup_unit(m.group(3))),
+    # "45min", "5min.", "10sec" (no space)
+    (re.compile(r'^(\d+(?:\.\d+)?)(sec|min|hr|hour)s?\.?\s*$', re.I),
+     lambda m: float(m.group(1)) * _lookup_unit(m.group(2))),
+    # "5 min.", "10 sec." (with period)
+    (re.compile(r'^(\d+(?:\.\d+)?)\s*(min|sec|hr)s?\.?\s*$', re.I),
+     lambda m: float(m.group(1)) * _lookup_unit(m.group(2))),
+    # "<1 minute", ">5 seconds"
+    (re.compile(r'^[<>]\s*(\d+(?:\.\d+)?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)', re.I),
+     lambda m: float(m.group(1)) * _lookup_unit(m.group(2))),
+    # Bare decimals ".5", ".3" — UFOCAT decimal minutes
+    (re.compile(r'^\.(\d+)\s*$'), lambda m: float("0." + m.group(1)) * 60),
+    # "+1", "+2" — UFOCAT "more than N minutes"
+    (re.compile(r'^\+(\d+)\s*$'), lambda m: float(m.group(1)) * 60),
+    # Bare numbers: assume minutes (UFOCAT/UPDB convention)
+    (re.compile(r'^(\d+(?:\.\d+)?)\s*$'), lambda m: float(m.group(1)) * 60),
+    # Bare words
+    (re.compile(r'^seconds?\s*$', re.I), lambda _: 10),
+    (re.compile(r'^minutes?\s*$', re.I), lambda _: 60),
+    (re.compile(r'^hours?\s*$', re.I), lambda _: 3600),
+    (re.compile(r'^instant(?:aneous)?\s*$', re.I), lambda _: 1),
+    (re.compile(r'^brief\s*$', re.I), lambda _: 3),
+    (re.compile(r'^moment(?:ary)?\s*$', re.I), lambda _: 2),
+    (re.compile(r'^split\s*second\s*$', re.I), lambda _: 1),
+]
+
+
+def _parse_duration_text(raw):
+    """Parse a duration string to integer seconds, or None."""
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.upper() in _UFOCAT_DURATION_CODES:
+        return _UFOCAT_DURATION_CODES[text.upper()]
+    text_clean = text.rstrip("+").strip()
+    for pattern, calc in _DURATION_PATTERNS:
+        m = pattern.match(text_clean)
+        if m:
+            try:
+                secs = calc(m)
+                if secs is not None and 0 < secs <= 365 * 86400:
+                    return int(round(secs))
+            except (ValueError, TypeError):
+                pass
+    return None
+
+
 def clean_duration(conn):
-    """Map duration_seconds into coarse buckets."""
+    """Parse duration text to seconds, then bucket into coarse categories."""
     cur = conn.cursor()
+
+    # Phase 1: parse unparsed duration text strings into duration_seconds
+    cur.execute("""
+        SELECT id, duration FROM sighting
+        WHERE duration IS NOT NULL AND duration_seconds IS NULL
+    """)
+    rows = cur.fetchall()
+    updates = []
+    for sid, duration in rows:
+        secs = _parse_duration_text(duration)
+        if secs is not None:
+            updates.append((secs, sid))
+
+    if updates:
+        _executemany_batched(
+            conn,
+            "UPDATE sighting SET duration_seconds = ? WHERE id = ?",
+            updates,
+        )
+    parsed_count = len(updates)
+
+    # Phase 2: bucket all duration_seconds into coarse categories
     cur.execute("""
         UPDATE sighting SET duration_bucket = CASE
             WHEN duration_seconds IS NULL OR duration_seconds = 0 THEN NULL
@@ -833,7 +1011,9 @@ def clean_duration(conn):
     """)
     dist = dict(cur.fetchall())
     breakdown = ", ".join(f"{k}={v:,}" for k, v in dist.items())
-    print(f"  Duration bucketed: {sum(dist.values()):,} ({breakdown})")
+    total_bucketed = sum(dist.values())
+    print(f"  Duration: parsed {parsed_count:,} text strings, "
+          f"bucketed {total_bucketed:,} total ({breakdown})")
 
 
 # ============================================================

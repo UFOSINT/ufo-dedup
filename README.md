@@ -347,29 +347,76 @@ Every line should print `OK` and a non-zero size.
 
 ### Full pipeline
 
+```
+Raw Data (5 CSVs + 1 JSON + Reddit CSV)
+    |
+    v
+rebuild_db.py  (16 steps, ~30 min)
+    |
+    +-- Steps 1-7:   Import 6 sources into data/output/ufo_unified.db
+    +-- Step 8:       SQL data quality fixes
+    +-- Step 9:       Geocode pass 1 (GeoNames offline gazetteer)
+    +-- Step 10:      Audit pipeline (fix bad geocodes + replay cached LLM fixes)
+    +-- Step 11:      Geocode pass 2 (picks up audit-improved locations)
+    +-- Steps 12-15:  Enrich, dedup, sentiment, derived analysis
+    +-- Step 16:      Copy to explorer
+    |
+    v
+data/output/ufo_unified.db  (618K sightings, ~1.8 GB, PRIVATE)
+    |
+    +-- emotions.py          (optional, GPU, ~35 min)
+    +-- run_enrich.py        (optional, LLM field extraction, ~$8)
+    +-- run_audit.py         (optional, LLM location normalization, ~$3)
+    |
+    v
+export_public.py  (strips raw text + private tables)
+    |
+    v
+data/output/ufo_public.db  (618K sightings, ~553 MB, PUBLIC)
+    |
+    v
+Dev team: migrate_sqlite_to_pg.py -> Azure Postgres -> ufosint.com
+```
+
+### Quick start
+
 ```bash
 # 1. Install ETL dependencies
 pip install -r requirements-etl.txt
 
-# 2. Download GeoNames gazetteer (one-time, ~10 MB)
+# 2. Download GeoNames gazetteer (one-time, ~30 MB)
 python geocode.py --download
 
-# 3. Full rebuild (~25 min: import + geocode + dedup + sentiment + analyze)
+# 3. Full rebuild (~30 min: import + geocode + audit + dedup + sentiment + analyze)
 python rebuild_db.py
 
 # 4. (Optional) Emotion classification — GPU-accelerated transformers
 pip install torch transformers          # ~2 GB download for torch+CUDA
-python emotions.py --db ufo_unified.db  # ~30 min on RTX 4060 Ti
+python emotions.py                      # ~35 min on RTX 4060 Ti
 
-# 5. Export public DB (strips raw text + private tables, VACUUMs)
-python export_public.py \
-    --source ufo_unified.db \
-    --target ufo_public.db
+# 5. (Optional) LLM field extraction — extracts shape/color/sound from descriptions
+export OPENROUTER_API_KEY="sk-or-v1-..."
+python run_enrich.py --limit 378000 --workers 15    # ~$8, ~70 min
+python run_enrich.py --apply                         # apply extractions to DB
+
+# 6. Export public DB (strips raw text + private tables, VACUUMs)
+python export_public.py
 ```
+
+### LLM processing (cached for replay)
+
+The pipeline uses LLMs for two optional enrichment passes. Results are cached to CSV so future rebuilds replay them without re-calling the API:
+
+| Tool | What it does | Cost | Cache file |
+|------|-------------|------|------------|
+| `run_audit.py` | Normalizes 120K messy location strings for re-geocoding | ~$3 | `data/output/audit_tier_b_fixes.csv` |
+| `run_enrich.py` | Extracts shape/color/duration/witnesses from 378K descriptions | ~$8 | `data/output/llm_field_extractions.csv` |
+
+Both tools have live dashboards, parallel workers, and resume from interruption.
 
 ### Configuring the source data path
 
-The 5 importers all read `UFOSINT_DATA_DIR` if set, otherwise default to `../data/raw/` (relative to this directory). Override examples:
+The 6 importers all read `UFOSINT_DATA_DIR` if set, otherwise default to `../data/raw/` (relative to this directory). Override examples:
 
 ```bash
 # bash / zsh
@@ -401,31 +448,55 @@ Test suite covers: schema creation, ETL parsers, data quality fixes, deduplicati
 ### Database & Pipeline
 | File | Description |
 |------|-------------|
-| `ufo_unified.db` | Main unified database (~1.4 GB) |
-| `create_schema.py` | Schema definition, indexes, seed data |
-| `rebuild_db.py` | **Master rebuild script** — runs full pipeline end-to-end |
+| `data/output/ufo_unified.db` | **Canonical private database** (~1.8 GB). All raw text, audit data, sentiment tables. Never distributed. |
+| `data/output/ufo_public.db` | **Public export** (~553 MB). Derived fields only, safe to ship. Hand this to the dev team. |
+| `create_schema.py` | Schema definition (94+ columns on sighting), indexes, seed data |
+| `rebuild_db.py` | **Master rebuild script** — 16-step pipeline from raw data to analysis-ready DB |
 
 ### Import Scripts
 | File | Source | Imported | Skipped |
 |------|--------|----------|---------|
 | `import_ufocat.py` | UFOCAT 2023 CSV | 197,108 | 123,304 (UFOReportCtr) |
-| `import_nuforc.py` | NUFORC CSV | 159,320 | — |
-| `import_mufon.py` | MUFON CSV | 138,310 | — |
+| `import_nuforc.py` | NUFORC CSV | 159,320 | -- |
+| `import_mufon.py` | MUFON CSV | 138,310 | -- |
 | `import_updb.py` | UPDB CSV | 65,016 | 1,820,741 (MUFON/NUFORC) |
-| `import_geldreich.py` | UFO-search JSON | 54,751 | — |
+| `import_geldreich.py` | UFO-search JSON | 54,751 | -- |
+| `import_reddit.py` | Reddit r/UFOs (LLM-extracted) | 3,811 | -- |
 
 ### Analysis & Derived Features
 | File | Description |
 |------|-------------|
-| `analyze.py` | **Derived-insight pipeline** — 9-step plug-in-ready pipeline (`ANALYSIS_STEPS` registry). Produces standardized shapes, movement/behavior tags, color extraction, quality scores, hoax flags, sentiment derivation, duration bucketing, and public-dataset field denormalization. |
-| `emotions.py` | **Transformer emotion classification** — GoEmotions 28-class, 7-class RoBERTa, RoBERTa sentiment, and VADER. GPU-accelerated (CUDA), batched, idempotent. Classifies 502,985 sightings with text. |
-| `sentiment.py` | VADER + NRCLex sentiment/emotion analysis (legacy, replaced by `emotions.py` for production) |
-| `export_public.py` | **Clean public export** — copies the private DB, strips raw text columns (`description`, `summary`, `notes`, `raw_json`) and private-only tables, VACUUMs. Produces `ufo_public.db` (507 MB) from `ufo_unified.db` (1.7 GB). Allowlist-driven: only tables in `PUBLIC_TABLES` survive. |
+| `analyze.py` | **Derived-insight pipeline** — 9-step plug-in-ready pipeline (`ANALYSIS_STEPS` registry). Shapes (28 canonical + 70 aliases), movement/behavior tags, color extraction, quality scores, hoax flags, sentiment derivation, duration parsing (200K+ text strings), and public-field denormalization. |
+| `emotions.py` | **Transformer emotion classification** — GoEmotions 28-class, 7-class RoBERTa, RoBERTa sentiment, and VADER. GPU-accelerated (CUDA), batched, idempotent. |
+| `sentiment.py` | VADER + NRCLex sentiment/emotion analysis |
+| `export_public.py` | **Clean public export** — strips raw text, drops private tables, VACUUMs. |
 | `enrich.py` | Transfers UFOCAT Hynek/Vallee metadata to NUFORC records |
 | `dedup.py` | Three-tier deduplication engine |
-| `geocode.py` | Offline geocoding via GeoNames gazetteer (cities15000.txt, auto-downloaded) |
-| `fix_coords.py` | Coordinate validation and auto-repair |
-| `db_summary.py` | Database statistics report |
+| `geocode.py` | Offline geocoding via GeoNames gazetteer. Country-aware matching to avoid wrong-continent geocodes. |
+
+### LLM / AI Tools
+| File | Description |
+|------|-------------|
+| `audit.py` | **LLM audit pipeline** — 3-tier: (A) fix wrong-country geocodes, (B) normalize location strings via LLM, (C) data mining. Includes `--replay` for cached results and `--pipeline` for deterministic rebuilds. |
+| `run_audit.py` | **CLI runner for Tier B** — live dashboard, parallel workers, resume-safe. Produces `audit_tier_b_fixes.csv` for replay. |
+| `run_enrich.py` | **CLI runner for field extraction** — extracts shape/color/duration/witnesses/sound/direction from descriptions via LLM. Live dashboard, parallel workers, resume-safe. Produces `llm_field_extractions.csv` for replay. |
+| `spot_check.py` | **Quality grader** — random sample spot-check via LLM. Grades A-F, flags location mismatches, finds extractable fields. |
+| `enrich_free_wins.py` | **Preview tool** — stages duration parsing and shape mapping improvements to CSV for review before merging into `analyze.py`. |
+
+### Reddit Pipeline
+| File | Description |
+|------|-------------|
+| `scrape_reddit.py` | Pass 1: scrape r/UFOs posts via Reddit JSON API / PRAW |
+| `extract_reddit.py` | Pass 2: LLM-extract structured fields from raw posts via OpenRouter |
+| `import_reddit.py` | Pass 3: import extracted CSV into `ufo_unified.db` as source_db_id=6 |
+
+### Data Directory
+| Path | Description |
+|------|-------------|
+| `data/raw/` | Source datasets (not in git). See `data/raw/README.md` for acquisition. |
+| `data/output/` | Pipeline outputs: databases, LLM cache CSVs, audit logs. See `data/output/README.md`. |
+| `data/cache/` | Reserved for future ML inference caches. See `data/cache/README.md`. |
+| `data/models/` | Reserved for local model weights. See `data/models/README.md`. |
 
 ### Tests
 | File | Description |

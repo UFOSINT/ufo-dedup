@@ -23,7 +23,7 @@ import time
 import zipfile
 
 DB_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "data", "output", "ufo_unified.db"
+    os.path.dirname(os.path.abspath(__file__)), "data", "output", "ufo_unified.db"
 )
 BUNDLE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "uap-gerb-integration-bundle.zip"

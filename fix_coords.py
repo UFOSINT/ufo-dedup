@@ -110,7 +110,7 @@ if __name__ == "__main__":
 
     # Fix both databases
     databases = [
-        os.path.join(base, "ufo_unified.db"),
+        os.path.join(base, "data", "output", "ufo_unified.db"),
         os.path.join(base, "ufo-explorer", "ufo_unified.db"),
     ]
 

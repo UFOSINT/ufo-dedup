@@ -1,13 +1,13 @@
-# Pipeline Tutorial — Reproducing v0.11 from Scratch
+# Pipeline Tutorial — Reproducing v0.14 from Scratch
 
-A complete walkthrough that takes you from a fresh clone of `ufo-dedup` and the 6 source datasets to your own copy of `ufo_public.db`. Each step includes the exact command, expected output (with real numbers from our v0.13 build), wall-clock timing, and what to do if it goes wrong.
+A complete walkthrough that takes you from a fresh clone of `ufo-dedup` and the 6 source datasets to your own copy of `ufo_public.db`. Each step includes the exact command, expected output (with real numbers from our v0.14 build), wall-clock timing, and what to do if it goes wrong.
 
 This is the **operational** companion to:
 - [`README.md`](../README.md) — what the project is
 - [`docs/METHODOLOGY.md`](METHODOLOGY.md) — how the algorithms work
 - [`docs/SCHEMA.md`](SCHEMA.md) — what's in the output
 
-> **Total wall time on a recent NVIDIA workstation**: ~60 minutes (25 min rebuild + 35 min emotion classification + 5 min export). Most of it is unattended.
+> **Total wall time on a recent NVIDIA workstation**: ~70 minutes (30 min rebuild + 35 min emotion classification + 5 min export). Most of it is unattended.
 
 ---
 
@@ -138,13 +138,13 @@ Gazetteer loaded: 191,181 exact keys, 186,847 city+country keys, 182,088 city-on
 
 ## 4. Run the structural rebuild
 
-This is the long step. Imports the 5 legacy sources, applies data quality fixes, geocodes, enriches NUFORC with UFOCAT metadata, runs deduplication, computes sentiment, runs the derived analysis pipeline. (Reddit is imported separately — see step 6 below.)
+This is the long step. Imports all 6 sources (5 legacy + Reddit), applies data quality fixes, geocodes, runs the LLM audit pipeline (replaying cached fixes), re-geocodes, enriches NUFORC, deduplicates, computes sentiment, and runs the derived analysis pipeline.
 
 ```bash
 python rebuild_db.py
 ```
 
-**Wall time**: ~25 minutes total. Breakdown by step:
+**Wall time**: ~30 minutes total. Breakdown by step:
 
 | Step | What | Wall time |
 |---|---|---:|
@@ -154,13 +154,16 @@ python rebuild_db.py
 | 4 | Import MUFON (138K rows) | ~20s |
 | 5 | Import UPDB (65K rows kept, 1.82M skipped) | ~50s |
 | 6 | Import UFO-search (55K rows from 19 historical compilations) | ~10s |
-| 7 | Apply data quality fixes (~30 SQL updates) | ~10s |
-| 8 | Geocode locations via GeoNames | ~3 min |
-| 9 | Enrich NUFORC with UFOCAT Hynek/Vallée metadata | ~10s |
-| 10 | Three-tier deduplication | ~1 min |
-| 11 | Sentiment analysis (VADER + NRC on 503K rows) | ~9 min |
-| 12 | Derived analysis pipeline (9 ANALYSIS_STEPS) | ~7 min |
-| 13 | Copy to explorer (skipped — directory absent in standalone clones) | <1s |
+| 7 | Import Reddit r/UFOs (3.8K LLM-extracted sighting reports) | ~5s |
+| 8 | Apply data quality fixes (~30 SQL updates) | ~10s |
+| 9 | Geocode locations via GeoNames (pass 1) | ~3 min |
+| 10 | Audit: fix bad geocodes + replay cached LLM location fixes | ~2 min |
+| 11 | Geocode locations (pass 2 — picks up audit-improved locations) | ~2 min |
+| 12 | Enrich NUFORC with UFOCAT Hynek/Vallee metadata | ~10s |
+| 13 | Three-tier deduplication | ~1 min |
+| 14 | Sentiment analysis (VADER + NRC on 503K rows) | ~9 min |
+| 15 | Derived analysis pipeline (9 ANALYSIS_STEPS) | ~9 min |
+| 16 | Copy to explorer (skipped — directory absent in standalone clones) | <1s |
 
 **Expected final output:**
 ```
@@ -172,21 +175,23 @@ python rebuild_db.py
   MUFON              138,310
   UPDB                65,016
   UFO-search          54,751
-  TOTAL              614,505    (before Reddit ingest — see step 6)
+  r/UFOs               3,811
+  TOTAL              618,316
 
   Duplicate candidates: 126,729
   NUFORC records with Hynek (enriched): 102,554
-  Geocoded sightings: 396,240 (43,994 locations via GeoNames)
+  Geocoded sightings: 418,001 (48,000+ locations via GeoNames)
   Sentiment records: 502,985
-  Derived analysis: 614,505 scored (>=60: ~118,000, 24 standardized shapes)
-  Public fields:    coords=396,165, datetime=604,393, has_description=510,229, has_media=96,998
-  Movement/dates:   has_movement=249,217, date-capped (unknown date): 8,830
+  Derived analysis: 618,316 scored (>=60: ~122,000, 24 standardized shapes)
+  Public fields:    coords=418,001, datetime=608,073, has_description=514,032, has_media=98,789
+  Movement/dates:   has_movement=250,820, date-capped (unknown date): 8,955
+  Audit:            bad_geocodes_fixed=29,029, locations_normalized=78,518
 
-  Total elapsed: ~1500s (~25 min)
-  Database size: 1678 MB
+  Total elapsed: ~1800s (~30 min)
+  Database size: ~1800 MB
 ```
 
-The numbers should match exactly except for `quality_score >= 60` (depends slightly on data quality fixes that are deterministic but version-sensitive — should land within ±200 rows of 118,320).
+The numbers should match exactly except for `quality_score >= 60` (depends slightly on data quality fixes that are deterministic but version-sensitive — should land within +/-200 rows of 122,381).
 
 ### If something goes wrong
 
@@ -225,17 +230,58 @@ for q in [
 
 **Expected output:**
 ```
-SELECT COUNT(*) FROM sighting                                          614,505
-SELECT COUNT(*) FROM location                                          214,782
+SELECT COUNT(*) FROM sighting                                          618,316
+SELECT COUNT(*) FROM location                                          218,000
 SELECT COUNT(*) FROM duplicate_candidate                               126,729
 SELECT COUNT(*) FROM sentiment_analysis                                502,985
-SELECT COUNT(*) FROM sighting WHERE quality_score IS NOT NULL          614,505
-SELECT COUNT(*) FROM sighting WHERE quality_score >= 60                118,320
-SELECT COUNT(*) FROM sighting WHERE has_movement_mentioned = 1         249,217
-SELECT COUNT(*) FROM sighting WHERE lat IS NOT NULL AND lng IS NOT NULL 396,165
+SELECT COUNT(*) FROM sighting WHERE quality_score IS NOT NULL          618,316
+SELECT COUNT(*) FROM sighting WHERE quality_score >= 60                122,381
+SELECT COUNT(*) FROM sighting WHERE has_movement_mentioned = 1         250,820
+SELECT COUNT(*) FROM sighting WHERE lat IS NOT NULL AND lng IS NOT NULL 418,001
 ```
 
-If your numbers don't match within ±100 rows on any line, something diverged. The most common cause is a different snapshot of the source data (NUFORC scrapes age, MUFON exports update). The pipeline is otherwise deterministic.
+If your numbers don't match within +/-100 rows on any line, something diverged. The most common cause is a different snapshot of the source data (NUFORC scrapes age, MUFON exports update). The pipeline is otherwise deterministic.
+
+---
+
+## 5b. (Optional) Run a live LLM audit pass
+
+The rebuild pipeline replays **cached** LLM results from `data/output/audit_tier_b_fixes.csv`. To run a fresh LLM audit (e.g., after adding new source data, or to process locations the cache didn't cover), use the interactive audit tool:
+
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-..."   # temp key with spending limit
+python run_audit.py --workers 15           # ~$3-5 for all 120K locations
+```
+
+This processes all un-audited location strings through Gemini Flash, normalizing messy entries like `"Toronto (Canada), ON, Canada"` -> `city=Toronto, state=ON, country=CA`. Results are:
+- Stored in `audit_*` columns on the `sighting` table
+- Backed up to `data/output/audit_tier_b_fixes.csv` (for replay on future rebuilds)
+- Logged to `audit_tier_b.log`
+
+**Three audit tiers:**
+
+| Tier | What | LLM? | Cost | Command |
+|---|---|---|---|---|
+| A | Fix wrong-country geocodes (US city matched to NZ/AU/ZA) | No | Free | `python audit.py --fix-geocodes` |
+| B | Normalize messy location strings for re-geocoding | Yes | ~$3-5 | `python run_audit.py --workers 15` |
+| C | Extract structured fields from rich narrative text | Yes | ~$15-20 | `python audit.py --tier c --limit 1000` |
+
+After a live run, export the backup CSV so future rebuilds can replay without re-calling the API:
+
+```bash
+python -c "
+import audit
+# The backup is auto-exported during run_audit.py, but you can re-export:
+# (see the export block at the end of run_audit.py)
+"
+```
+
+**v0.14 audit results (cached in repo):**
+- 114,541 unique location strings processed
+- 49,190 improved (43% hit rate)
+- 78,518 sighting rows with normalized locations
+- 29,029 bad geocodes detected and fixed
+- Net: +48,503 new correct map pins, -29,140 wrong pins removed
 
 ---
 
@@ -400,12 +446,66 @@ Welcome to your reproduction. From here, see [`docs/QUERIES.md`](QUERIES.md) for
 |---|---|
 | Source data on disk | ~1 GB |
 | Build intermediates (peak) | ~3 GB |
-| `ufo_unified.db` (private, with raw text) | ~1.7 GB |
-| `ufo_public.db` (clean export) | ~507 MB |
+| `ufo_unified.db` (private, with raw text) | ~1.8 GB |
+| `ufo_public.db` (clean export) | ~553 MB |
 | HuggingFace model cache | ~2 GB |
 | GeoNames gazetteer | ~30 MB |
-| Wall time without GPU emotions | ~25 min |
-| Wall time with GPU emotions | ~60 min |
+| Audit LLM cache (`audit_tier_b_fixes.csv`) | ~7 MB |
+| Wall time without GPU emotions | ~30 min |
+| Wall time with GPU emotions | ~70 min |
 | Wall time with CPU emotions | ~30 hours |
+| LLM audit (live run, one-time) | ~$3-5 via OpenRouter |
 
 Once the build is done and the `ufo_public.db` is in hand, the Postgres migration (for those running the public app) is documented in `ufosint-explorer/scripts/migrate_sqlite_to_pg.py` — but most reproducers stop at the SQLite and query it directly.
+
+## Pipeline architecture diagram
+
+```
+Raw Data (5 CSVs + 1 JSON + Reddit CSV)
+    |
+    v
+rebuild_db.py  (16-step orchestrator)
+    |
+    +-- Steps 1-7:   Import 6 sources -> ufo_unified.db
+    +-- Step 8:       SQL data quality fixes
+    +-- Step 9:       Geocode pass 1 (GeoNames gazetteer)
+    +-- Step 10:      Audit pipeline:
+    |                   - Tier A: fix wrong-country geocodes (code only)
+    |                   - Tier B: replay cached LLM location fixes
+    +-- Step 11:      Geocode pass 2 (picks up audit-improved locations)
+    +-- Steps 12-15:  Enrich, dedup, sentiment, derived analysis
+    +-- Step 16:      Copy to explorer
+    |
+    v
+ufo_unified.db  (618K sightings, ~1.8 GB, private)
+    |
+    v
+emotions.py  (optional GPU step, ~35 min)
+    |
+    v
+export_public.py  (strips raw text, drops private tables)
+    |
+    v
+ufo_public.db  (618K sightings, ~553 MB, safe to distribute)
+    |
+    v
+migrate_sqlite_to_pg.py  (Azure Postgres for ufosint.com)
+```
+
+### LLM audit data flow
+
+```
+FIRST RUN (requires OpenRouter API key + ~$3-5):
+  run_audit.py --workers 15
+    -> Processes 120K location strings via Gemini Flash
+    -> Writes audit_* columns on sighting table
+    -> Exports data/output/audit_tier_b_fixes.csv  (cached results)
+    -> Exports data/output/audit_tier_b.log         (full log)
+
+SUBSEQUENT REBUILDS (no API key needed):
+  rebuild_db.py  (step 10)
+    -> audit.py --pipeline
+      -> Tier A: fix bad geocodes (pure code)
+      -> Tier B: replay_tier_b() reads cached CSV, re-applies fixes
+    -> geocode.py  (pass 2 picks up improved locations)
+```

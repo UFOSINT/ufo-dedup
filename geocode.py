@@ -17,7 +17,7 @@ import zipfile
 import urllib.request
 from collections import defaultdict
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "data", "output", "ufo_unified.db")
 GEODATA_DIR = os.path.join(os.path.dirname(__file__), "geodata")
 GAZETTEER_PATH = os.path.join(GEODATA_DIR, "cities15000.txt")
 GAZETTEER_URL = "http://download.geonames.org/export/dump/cities15000.zip"
@@ -182,10 +182,32 @@ def geocode_location(city, state, country, raw_text, exact, nostate, cityonly):
             lat, lng, _ = nostate[key][0]  # Largest city by population
             return lat, lng, "city_country"
 
-    # Strategy 3: City only (pick largest globally)
+    # Strategy 3: City only — but prefer matches in the expected country
     if city_upper and city_upper not in ("UNKNOWN", "UNKNOWN CITY", "N/A", ""):
         if city_upper in cityonly:
-            lat, lng, _, _ = cityonly[city_upper][0]  # Largest by population
+            candidates = cityonly[city_upper]  # sorted by population desc
+            # If we know the expected country (from state), prefer that country
+            expected_country = None
+            if state_code and state_code in (
+                "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID",
+                "IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS",
+                "MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK",
+                "OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV",
+                "WI","WY","DC",
+            ):
+                expected_country = "US"
+            elif state_code in ("AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"):
+                expected_country = "CA"
+            elif country_code:
+                expected_country = country_code
+
+            if expected_country:
+                local = [c for c in candidates if c[3] == expected_country]
+                if local:
+                    lat, lng, _, _ = local[0]
+                    return lat, lng, "city_only"
+            # Fallback: largest globally
+            lat, lng, _, _ = candidates[0]
             return lat, lng, "city_only"
 
     # Strategy 4: Parse raw_text for locations like "ITALY, ROME" or "City, ST"
