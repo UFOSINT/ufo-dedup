@@ -1,0 +1,24 @@
+# UFOSINT Pipeline Configuration
+# Override any value with environment variables (UFOSINT_DATA_DIR, OPENROUTER_API_KEY, etc.)
+
+[paths]
+db = "data/output/ufo_unified.db"
+public_db = "data/output/ufo_public.db"
+raw_data = "../data/raw"               # override: UFOSINT_DATA_DIR
+geodata = "geodata"
+cache = "data/output"
+
+[llm]
+model = "google/gemini-2.0-flash-001"  # override: AUDIT_MODEL
+workers = 15
+batch_size = 25
+# API key: set OPENROUTER_API_KEY env var (never store in this file)
+
+[gpu]
+batch_size = 64
+device = "auto"                        # auto|cuda|cpu
+
+[pipeline]
+unknown_date_cap = 15
+unknown_date_cap_rich = 35
+fuzzy_shape_cutoff = 85
