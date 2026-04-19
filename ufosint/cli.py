@@ -300,9 +300,34 @@ def emotions(stats, export_cache, replay):
         emo_mod.run_emotions(Config.db_path())
 
 
-# ── Future commands ──
-# @main.command()
-# def rebuild(): ...     # Phase 6
+# ── Rebuild command ──
+
+@main.command()
+@click.option("--from", "from_step", type=str, help="Resume from this step")
+@click.option("--skip", type=str, multiple=True, help="Steps to skip (repeatable)")
+@click.option("--only", type=str, help="Run only this single step")
+@click.option("--list", "list_steps", is_flag=True, help="List all pipeline steps")
+def rebuild(from_step, skip, only, list_steps):
+    """Run the full rebuild pipeline (17 steps).
+
+    Examples:
+        ufosint rebuild                        # full pipeline
+        ufosint rebuild --from geocode1        # resume from geocoding
+        ufosint rebuild --skip dedup --skip emotions
+        ufosint rebuild --only analyze         # single step
+        ufosint rebuild --list                 # show steps
+    """
+    from ufosint.pipeline import Pipeline, STEPS
+
+    if list_steps:
+        print("\nPipeline steps:")
+        for i, (name, label) in enumerate(STEPS):
+            print(f"  {i+1:>2}. {name:<18} {label}")
+        print()
+        return
+
+    p = Pipeline()
+    p.run(from_step=from_step, skip=set(skip), only=only)
 
 
 if __name__ == "__main__":
