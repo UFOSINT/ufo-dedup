@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ufosint"
+version = "0.14.0"
+description = "Unified UFO/UAP sighting analysis pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "vaderSentiment",
+    "NRCLex",
+    "rapidfuzz>=3.0",
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+gpu = ["torch", "transformers"]
+llm = ["requests"]
+dev = ["pytest", "ruff"]
+all = ["torch", "transformers", "requests"]
+
+[project.scripts]
+ufosint = "ufosint.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ufosint*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120

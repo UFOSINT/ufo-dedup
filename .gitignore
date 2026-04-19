@@ -46,3 +46,4 @@ data/models/*.safetensors
 nul
 *.png
 *.tmp
+ufosint.egg-info/
