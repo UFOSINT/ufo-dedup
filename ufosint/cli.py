@@ -10,6 +10,8 @@ Usage:
 Commands are added incrementally as modules are migrated.
 """
 
+import os
+
 import click
 
 from ufosint import __version__
@@ -45,12 +47,55 @@ def config():
     print()
 
 
+# ── Import command ──
+
+@main.command("import")
+@click.argument("source", required=False)
+@click.option("--all", "import_all", is_flag=True, help="Import all sources")
+@click.option("--list", "list_sources", is_flag=True, help="List available sources")
+def import_cmd(source, import_all, list_sources):
+    """Import source data into the database.
+
+    Examples:
+        ufosint import nuforc
+        ufosint import --all
+        ufosint import --list
+    """
+    from ufosint.importers import IMPORTERS, get_importer
+
+    if list_sources:
+        print("\nAvailable sources:")
+        for name, cls in IMPORTERS.items():
+            imp = cls()
+            exists = "OK" if os.path.exists(imp.file_path) else "MISSING"
+            print(f"  {exists:>7}  {name:<14} {imp.source_name:<14} {imp.file_path}")
+        print()
+        return
+
+    if import_all:
+        db = Database()
+        for name, cls in IMPORTERS.items():
+            imp = cls()
+            print(f"\n--- {imp.source_name} ---")
+            imp.run(db)
+        return
+
+    if not source:
+        click.echo("Usage: ufosint import <source> | --all | --list")
+        return
+
+    try:
+        imp = get_importer(source)
+    except KeyError as e:
+        click.echo(str(e))
+        return
+
+    imp.run()
+
+
 # ── Future commands (added in later phases) ──
 # @main.command()
 # def rebuild(): ...
-#
-# @main.group()
-# def import_(): ...
 #
 # @main.command()
 # def geocode(): ...
@@ -61,17 +106,14 @@ def config():
 # @main.command()
 # def emotions(): ...
 #
-# @main.group()
+# @main.command()
 # def audit(): ...
 #
 # @main.command()
 # def enrich(): ...
 #
-# @main.group()
-# def export(): ...
-#
 # @main.command()
-# def spot_check(): ...
+# def export(): ...
 
 
 if __name__ == "__main__":
