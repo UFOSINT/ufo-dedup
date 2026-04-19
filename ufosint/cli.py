@@ -156,24 +156,153 @@ def analyze(step, list_steps):
     conn.close()
 
 
-# ── Future commands (added in later phases) ──
+# ── Audit command ──
+
+@main.command()
+@click.argument("tier", required=False, type=click.Choice(["a", "b", "c"]))
+@click.option("--fix-geocodes", is_flag=True, help="Fix bad geocodes (Tier A)")
+@click.option("--replay", is_flag=True, help="Replay cached Tier B fixes")
+@click.option("--pipeline", is_flag=True, help="Full deterministic audit (Tier A + replay)")
+@click.option("--stats", is_flag=True, help="Show audit status")
+@click.option("--limit", type=int, default=120000)
+@click.option("--workers", type=int, default=None)
+@click.option("--preview", is_flag=True)
+def audit(tier, fix_geocodes, replay, pipeline, stats, limit, workers, preview):
+    """LLM-powered data quality audit.
+
+    Examples:
+        ufosint audit --stats
+        ufosint audit a                    # detect bad geocodes
+        ufosint audit --fix-geocodes       # fix them
+        ufosint audit b --limit 500        # LLM location normalization
+        ufosint audit --replay             # replay cached fixes
+        ufosint audit --pipeline           # full deterministic (Tier A + replay)
+    """
+    # Delegate to existing audit.py during transition
+    import sys as _sys
+    _sys.path.insert(0, Config.project_root())
+    import audit as audit_mod
+
+    if stats:
+        audit_mod.print_stats(Config.db_path())
+    elif fix_geocodes:
+        audit_mod.tier_a_geocode_verify(Config.db_path(), fix=True)
+    elif replay:
+        audit_mod.replay_tier_b(Config.db_path())
+    elif pipeline:
+        audit_mod.run_audit_pipeline(Config.db_path())
+    elif tier == "a":
+        audit_mod.tier_a_geocode_verify(Config.db_path(), fix=False)
+    elif tier == "b":
+        w = workers or Config.llm_workers()
+        audit_mod.tier_b_location_normalize(
+            Config.db_path(), limit=limit, preview=preview, workers=w)
+    elif tier == "c":
+        audit_mod.tier_c_data_mine(
+            Config.db_path(), limit=limit, preview=preview)
+    else:
+        click.echo("Usage: ufosint audit <a|b|c> | --fix-geocodes | --replay | --pipeline | --stats")
+
+
+# ── Enrich command ──
+
+@main.command()
+@click.option("--limit", type=int, default=5000, help="Max records to process")
+@click.option("--workers", type=int, default=None)
+@click.option("--apply", is_flag=True, help="Apply cached extractions to DB")
+@click.option("--stats", is_flag=True, help="Show extraction status")
+def enrich(limit, workers, apply, stats):
+    """LLM field extraction from descriptions.
+
+    Examples:
+        ufosint enrich --limit 5000        # extract from 5K records
+        ufosint enrich --apply             # apply cached results to DB
+        ufosint enrich --stats             # show status
+    """
+    import sys as _sys
+    _sys.path.insert(0, Config.project_root())
+    import run_enrich
+
+    if stats:
+        run_enrich.print_stats()
+    elif apply:
+        run_enrich.apply_extractions()
+    else:
+        w = workers or Config.llm_workers()
+        if not Config.openrouter_api_key():
+            click.echo("ERROR: OPENROUTER_API_KEY not set")
+            return
+        run_enrich.run_extraction(limit=limit, workers=w)
+
+
+# ── Spot-check command ──
+
+@main.command("spot-check")
+@click.option("--count", type=int, default=500, help="Sample size")
+@click.option("--workers", type=int, default=10)
+@click.option("--preview", is_flag=True, help="Show sample without calling LLM")
+def spot_check(count, workers, preview):
+    """LLM quality grading of a random sample.
+
+    Examples:
+        ufosint spot-check --count 100 --preview
+        ufosint spot-check --count 500
+    """
+    import sys as _sys
+    _sys.path.insert(0, Config.project_root())
+    import spot_check as sc
+
+    sc.run_spot_check(count=count, workers=workers, preview=preview)
+
+
+# ── Export command ──
+
+@main.command()
+@click.argument("target", type=click.Choice(["public"]), default="public")
+def export(target):
+    """Export database for distribution.
+
+    Examples:
+        ufosint export public      # clean public SQLite
+    """
+    if target == "public":
+        import sys as _sys
+        _sys.path.insert(0, Config.project_root())
+        import export_public
+        export_public.main()
+
+
+# ── Emotions command ──
+
+@main.command()
+@click.option("--stats", is_flag=True, help="Show emotion coverage stats")
+@click.option("--export-cache", is_flag=True, help="Export to CSV cache")
+@click.option("--replay", is_flag=True, help="Replay cached emotions")
+def emotions(stats, export_cache, replay):
+    """GPU-accelerated transformer emotion classification.
+
+    Examples:
+        ufosint emotions              # run classification (requires CUDA GPU)
+        ufosint emotions --stats      # show coverage
+        ufosint emotions --replay     # replay from cache (no GPU needed)
+    """
+    import sys as _sys
+    _sys.path.insert(0, Config.project_root())
+    import emotions as emo_mod
+
+    if stats:
+        emo_mod.print_stats(Config.db_path())
+    elif export_cache:
+        emo_mod.export_emotion_cache(Config.db_path())
+    elif replay:
+        emo_mod.replay_emotion_cache(Config.db_path())
+    else:
+        emo_mod.run_emotions(Config.db_path())
+
+
+# ── Future commands ──
 # @main.command()
-# def rebuild(): ...
-#
-# @main.command()
-# def geocode(): ...
-#
-# @main.command()
-# def emotions(): ...
-#
-# @main.command()
-# def audit(): ...
-#
-# @main.command()
-# def enrich(): ...
-#
-# @main.command()
-# def export(): ...
+# def rebuild(): ...     # Phase 6
 
 
 if __name__ == "__main__":
