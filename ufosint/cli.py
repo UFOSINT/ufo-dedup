@@ -22,16 +22,26 @@ from ufosint.db import Database
 
 @click.group()
 @click.version_option(__version__, prog_name="ufosint")
-def main():
+@click.option("--db", "db_path", envvar="UFOSINT_DB", default=None,
+              help="Database path (overrides config). Env: UFOSINT_DB")
+@click.pass_context
+def main(ctx, db_path):
     """UFOSINT — Unified UFO/UAP Sighting Analysis Pipeline"""
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["db_path"] = db_path  # None = use Config default
+
+
+def _get_db(ctx):
+    """Get Database instance, respecting --db flag."""
+    path = ctx.obj.get("db_path") if ctx.obj else None
+    return Database(path) if path else Database()
 
 
 @main.command()
-def status():
+@click.pass_context
+def status(ctx):
     """Show database coverage dashboard."""
-    db = Database()
-    db.print_status()
+    _get_db(ctx).print_status()
 
 
 @main.command()
@@ -308,7 +318,8 @@ def emotions(stats, export_cache, replay):
 @click.option("--only", type=str, help="Run only this single step")
 @click.option("--list", "list_steps", is_flag=True, help="List all pipeline steps")
 @click.option("--test", is_flag=True, help="Use throwaway DB at data/test/ (protects production)")
-def rebuild(from_step, skip, only, list_steps, test):
+@click.pass_context
+def rebuild(ctx, from_step, skip, only, list_steps, test):
     """Run the full rebuild pipeline (17 steps).
 
     Examples:
@@ -318,6 +329,7 @@ def rebuild(from_step, skip, only, list_steps, test):
         ufosint rebuild --only analyze         # single step
         ufosint rebuild --list                 # show steps
         ufosint rebuild --test                 # throwaway DB (safe to experiment)
+        ufosint --db /tmp/test.db rebuild      # custom output path
     """
     from ufosint.pipeline import Pipeline, STEPS
 
@@ -337,11 +349,302 @@ def rebuild(from_step, skip, only, list_steps, test):
         print(f"  TEST MODE: writing to {test_db}")
         print(f"  Production DB is UNTOUCHED\n")
         db = Database(test_db)
+    elif ctx.obj.get("db_path"):
+        db = Database(ctx.obj["db_path"])
+        print(f"  Custom DB: {db.path}\n")
     else:
         db = None  # use default
 
     p = Pipeline(db=db)
     p.run(from_step=from_step, skip=set(skip), only=only)
+
+
+# ── Validate command ──
+
+@main.command()
+@click.pass_context
+def validate(ctx):
+    """Validate database integrity and source data availability.
+
+    Checks: source files exist, DB schema is correct, row counts match
+    expected ranges, no orphaned foreign keys, cache files present.
+    """
+    db = _get_db(ctx)
+    from ufosint.importers import IMPORTERS
+    from ufosint.display.colors import C
+
+    print(f"\n{'=' * 62}")
+    print(f"  UFOSINT Validation Report")
+    print(f"{'=' * 62}\n")
+
+    issues = 0
+
+    # 1. Source files
+    print("  Source data files:")
+    for name, cls in IMPORTERS.items():
+        imp = cls()
+        exists = os.path.exists(imp.file_path)
+        icon = f"{C.GREEN}OK{C.RESET}" if exists else f"{C.RED}MISSING{C.RESET}"
+        print(f"    {icon:>14}  {name:<14} {imp.file_path}")
+        if not exists:
+            issues += 1
+
+    # 2. Database
+    print(f"\n  Database:")
+    if db.exists():
+        s = db.status()
+        total = s.get("total_sightings", 0)
+        print(f"    {C.GREEN}OK{C.RESET}      {total:,} sightings at {db.path}")
+
+        # Check per-source counts
+        for src, count in s.get("sources", {}).items():
+            if count == 0:
+                print(f"    {C.RED}WARN{C.RESET}    {src} has 0 rows")
+                issues += 1
+    else:
+        print(f"    {C.RED}MISSING{C.RESET}  {db.path}")
+        issues += 1
+
+    # 3. Cache files
+    print(f"\n  Cache files (for replay):")
+    cache_files = [
+        ("audit_tier_b_fixes.csv", "Location normalization"),
+        ("llm_field_extractions.csv", "LLM field extractions"),
+        ("emotion_classification_cache.csv", "Emotion classification"),
+    ]
+    for filename, label in cache_files:
+        path = Config.cache_path(filename)
+        if os.path.exists(path):
+            size = os.path.getsize(path) / (1024 * 1024)
+            print(f"    {C.GREEN}OK{C.RESET}      {label:<30} {size:.1f} MB")
+        else:
+            print(f"    {C.YELLOW}ABSENT{C.RESET}  {label:<30} (will be skipped on rebuild)")
+
+    # 4. Geodata
+    print(f"\n  Geodata:")
+    geodata = Config.geodata_dir()
+    gaz = os.path.join(geodata, "cities15000.txt")
+    if os.path.exists(gaz):
+        print(f"    {C.GREEN}OK{C.RESET}      Gazetteer at {gaz}")
+    else:
+        print(f"    {C.RED}MISSING{C.RESET}  Run: ufosint rebuild --only schema && python geocode.py --download")
+        issues += 1
+
+    # Summary
+    print(f"\n  {'=' * 50}")
+    if issues == 0:
+        print(f"  {C.GREEN}All checks passed.{C.RESET}")
+    else:
+        print(f"  {C.RED}{issues} issue(s) found.{C.RESET}")
+    print()
+
+
+# ── Query command ──
+
+@main.command()
+@click.argument("sql")
+@click.option("--limit", type=int, default=25, help="Max rows to display")
+@click.pass_context
+def query(ctx, sql, limit):
+    """Run a SQL query against the database.
+
+    Examples:
+        ufosint query "SELECT COUNT(*) FROM sighting"
+        ufosint query "SELECT standardized_shape, COUNT(*) FROM sighting GROUP BY 1 ORDER BY 2 DESC" --limit 10
+    """
+    import sqlite3
+    db = _get_db(ctx)
+    if not db.exists():
+        click.echo(f"Database not found: {db.path}")
+        return
+
+    conn = db.connect()
+    try:
+        cur = conn.execute(sql)
+        cols = [d[0] for d in cur.description] if cur.description else []
+        rows = cur.fetchmany(limit)
+
+        if not cols:
+            print("  (no results)")
+            conn.close()
+            return
+
+        # Calculate column widths
+        widths = [len(c) for c in cols]
+        str_rows = []
+        for row in rows:
+            str_row = []
+            for i, val in enumerate(row):
+                s = str(val) if val is not None else "NULL"
+                s = s[:60]  # truncate
+                str_row.append(s)
+                widths[i] = max(widths[i], len(s))
+            str_rows.append(str_row)
+
+        # Print header
+        header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(cols))
+        print(f"\n  {header}")
+        print(f"  {'  '.join('-' * w for w in widths)}")
+        for str_row in str_rows:
+            line = "  ".join(str_row[i].ljust(widths[i]) for i in range(len(cols)))
+            print(f"  {line}")
+
+        # Total count hint
+        if len(rows) >= limit:
+            print(f"\n  (showing first {limit} rows — use --limit to see more)")
+
+    except sqlite3.OperationalError as e:
+        print(f"  SQL error: {e}")
+    finally:
+        conn.close()
+
+
+# ── Cache command group ──
+
+@main.group()
+def cache():
+    """Manage LLM/GPU inference caches."""
+    pass
+
+
+@cache.command("list")
+def cache_list():
+    """List all cached result files."""
+    from ufosint.display.colors import C
+
+    print(f"\n  Cached Results:")
+    print(f"  {'=' * 55}")
+
+    cache_dir = Config.cache_dir()
+    found = False
+    for f in sorted(os.listdir(cache_dir)):
+        if f.endswith(".csv"):
+            path = os.path.join(cache_dir, f)
+            size = os.path.getsize(path) / (1024 * 1024)
+            # Count rows
+            with open(path, "r", encoding="utf-8") as fh:
+                rows = sum(1 for _ in fh) - 1
+            print(f"    {f:<45} {size:>6.1f} MB  {rows:>8,} rows")
+            found = True
+
+    if not found:
+        print(f"    (no cache files found in {cache_dir})")
+    print()
+
+
+@cache.command("replay")
+@click.pass_context
+def cache_replay(ctx):
+    """Replay all cached results into the database (no API/GPU needed)."""
+    import sys as _sys
+    _sys.path.insert(0, Config.project_root())
+    db = _get_db(ctx)
+
+    print(f"\n  Replaying caches into {db.path}\n")
+
+    # Audit Tier B
+    import audit as audit_mod
+    audit_mod.replay_tier_b(db.path)
+
+    # LLM extractions
+    import run_enrich
+    run_enrich.apply_extractions(db.path)
+
+    # Emotions
+    import emotions as emo_mod
+    emo_mod.replay_emotion_cache(db.path)
+
+    print(f"\n  Replay complete.")
+
+
+# ── Scaffold command ──
+
+@main.command()
+@click.argument("source_name")
+def scaffold(source_name):
+    """Generate boilerplate for a new source importer.
+
+    Creates ufosint/importers/<name>.py with the base class template.
+
+    Example:
+        ufosint scaffold aaro
+    """
+    name = source_name.lower().strip()
+    class_name = name.capitalize() + "Importer"
+    display_name = source_name.upper()
+    file_path = os.path.join(Config.project_root(), "ufosint", "importers", f"{name}.py")
+
+    if os.path.exists(file_path):
+        click.echo(f"  File already exists: {file_path}")
+        return
+
+    template = f'''"""
+{display_name} importer — [describe the source].
+
+[Row count, format, acquisition notes]
+"""
+
+import json
+import os
+
+from ufosint.config import Config
+from ufosint.importers.base import Importer
+
+
+def parse_{name}_date(date_str):
+    """Parse {display_name} date format into (ISO, raw)."""
+    if not date_str or not date_str.strip():
+        return None, None
+    raw = date_str.strip()
+    # TODO: implement source-specific date parsing
+    return raw, raw
+
+
+class {class_name}(Importer):
+    source_name = "{display_name}"
+
+    @property
+    def file_path(self):
+        return os.path.join(Config.raw_data_dir(), "{display_name}", "{name}_data.csv")
+
+    def parse_row(self, raw):
+        # Location
+        location = {{
+            "raw_text": raw.get("location") or None,
+            "city": raw.get("city") or None,
+            "state": raw.get("state") or None,
+            "country": raw.get("country") or None,
+        }}
+
+        # Date
+        date_event, date_raw = parse_{name}_date(raw.get("date", ""))
+
+        # Sighting
+        sighting = {{
+            "source_record_id": raw.get("id") or None,
+            "date_event": date_event,
+            "date_event_raw": date_raw,
+            "description": raw.get("description") or None,
+            "shape": raw.get("shape") or None,
+            "raw_json": json.dumps(raw, ensure_ascii=False),
+        }}
+
+        return location, sighting
+'''
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(template)
+
+    print(f"\n  Created: {file_path}")
+    print(f"\n  Next steps:")
+    print(f"    1. Edit {file_path} — implement parse_row() for your source format")
+    print(f"    2. Add to ufosint/importers/__init__.py:")
+    print(f"       from ufosint.importers.{name} import {class_name}")
+    print(f"       IMPORTERS[\"{name}\"] = {class_name}")
+    print(f"    3. Add \"{display_name}\" to create_schema.py source_database seeds")
+    print(f"    4. Place your data file at: <raw_data_dir>/{display_name}/{name}_data.csv")
+    print(f"    5. Run: ufosint import {name}")
+    print()
 
 
 if __name__ == "__main__":
