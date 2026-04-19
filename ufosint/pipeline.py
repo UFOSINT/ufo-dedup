@@ -52,10 +52,28 @@ class Pipeline:
 
     def __init__(self, db=None):
         self.db = db or Database()
+        self.db_path = self.db.path
         # Add project root to sys.path so legacy modules are importable
         root = Config.project_root()
         if root not in sys.path:
             sys.path.insert(0, root)
+
+    def _patch_legacy_db_path(self):
+        """Override DB_PATH in legacy modules to use our db_path.
+
+        This is the bridge between the old scripts (hardcoded paths)
+        and the new architecture (configurable paths). Removed once
+        all modules are fully migrated.
+        """
+        for mod_name in [
+            "create_schema", "geocode", "sentiment", "enrich", "dedup",
+            "rebuild_db", "analyze", "audit", "emotions", "gerb_overlay",
+            "export_public", "run_enrich",
+        ]:
+            if mod_name in sys.modules:
+                mod = sys.modules[mod_name]
+                if hasattr(mod, "DB_PATH"):
+                    mod.DB_PATH = self.db_path
 
     def run(self, from_step=None, skip=None, only=None):
         """Execute the pipeline.
@@ -118,7 +136,9 @@ class Pipeline:
 
     def _step_schema(self):
         import create_schema
-        create_schema.create_schema(self.db.path)
+        create_schema.DB_PATH = self.db_path
+        create_schema.create_schema(self.db_path)
+        self._patch_legacy_db_path()
 
     def _step_ufocat(self):
         from ufosint.importers import get_importer
@@ -150,26 +170,32 @@ class Pipeline:
 
     def _step_fixes(self):
         import rebuild_db
+        rebuild_db.DB_PATH = self.db_path
         rebuild_db.apply_data_fixes()
 
     def _step_geocode1(self):
         import geocode
-        geocode.run_geocoding()
+        geocode.DB_PATH = self.db_path
+        geocode.run_geocoding(self.db_path)
 
     def _step_audit(self):
         import audit as audit_mod
-        audit_mod.run_audit_pipeline(self.db.path)
+        audit_mod.DB_PATH = self.db_path
+        audit_mod.run_audit_pipeline(self.db_path)
 
     def _step_geocode2(self):
         import geocode
-        geocode.run_geocoding()
+        geocode.DB_PATH = self.db_path
+        geocode.run_geocoding(self.db_path)
 
     def _step_enrich_nuforc(self):
         import enrich
+        enrich.DB_PATH = self.db_path
         enrich.run_enrichment()
 
     def _step_dedup(self):
         import dedup
+        dedup.DB_PATH = self.db_path
         old_argv = sys.argv
         sys.argv = ["dedup.py"]
         dedup.main()
@@ -177,7 +203,8 @@ class Pipeline:
 
     def _step_sentiment(self):
         import sentiment
-        sentiment.run_sentiment()
+        sentiment.DB_PATH = self.db_path
+        sentiment.run_sentiment(self.db_path)
 
     def _step_analyze(self):
         from ufosint.processors import PROCESSORS
@@ -203,7 +230,7 @@ class Pipeline:
         # Replay emotion cache
         import emotions as emo_mod
         if os.path.exists(emo_mod.EMOTION_CACHE_CSV):
-            emo_mod.replay_emotion_cache(self.db.path)
+            emo_mod.replay_emotion_cache(self.db_path)
         else:
             print("  No emotion cache — run `ufosint emotions` to generate")
 
@@ -212,7 +239,7 @@ class Pipeline:
         if os.path.exists(extract_csv):
             print("  Replaying LLM field extractions...")
             import run_enrich
-            run_enrich.apply_extractions(self.db.path)
+            run_enrich.apply_extractions(self.db_path)
         else:
             print("  No extraction cache — run `ufosint enrich` to generate")
 
@@ -221,10 +248,15 @@ class Pipeline:
         if os.path.exists(bundle):
             print("  Running Gerb overlay...")
             import gerb_overlay
-            gerb_overlay.run_gerb_overlay(self.db.path, bundle)
+            gerb_overlay.DB_PATH = self.db_path
+            gerb_overlay.run_gerb_overlay(self.db_path, bundle)
         else:
             print("  No Gerb bundle — skipping nuclear proximity")
 
     def _step_export(self):
         import export_public
+        # For test mode, export to a test public DB
+        test_public = self.db_path.replace("unified", "public")
+        export_public.DEFAULT_SOURCE = self.db_path
+        export_public.DEFAULT_TARGET = test_public
         export_public.main()

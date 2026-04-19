@@ -307,7 +307,8 @@ def emotions(stats, export_cache, replay):
 @click.option("--skip", type=str, multiple=True, help="Steps to skip (repeatable)")
 @click.option("--only", type=str, help="Run only this single step")
 @click.option("--list", "list_steps", is_flag=True, help="List all pipeline steps")
-def rebuild(from_step, skip, only, list_steps):
+@click.option("--test", is_flag=True, help="Use throwaway DB at data/test/ (protects production)")
+def rebuild(from_step, skip, only, list_steps, test):
     """Run the full rebuild pipeline (17 steps).
 
     Examples:
@@ -316,6 +317,7 @@ def rebuild(from_step, skip, only, list_steps):
         ufosint rebuild --skip dedup --skip emotions
         ufosint rebuild --only analyze         # single step
         ufosint rebuild --list                 # show steps
+        ufosint rebuild --test                 # throwaway DB (safe to experiment)
     """
     from ufosint.pipeline import Pipeline, STEPS
 
@@ -326,7 +328,19 @@ def rebuild(from_step, skip, only, list_steps):
         print()
         return
 
-    p = Pipeline()
+    if test:
+        test_db = os.path.join(Config.project_root(), "data", "test", "test_unified.db")
+        os.makedirs(os.path.dirname(test_db), exist_ok=True)
+        if os.path.exists(test_db):
+            os.remove(test_db)
+            print(f"  Removed old test DB")
+        print(f"  TEST MODE: writing to {test_db}")
+        print(f"  Production DB is UNTOUCHED\n")
+        db = Database(test_db)
+    else:
+        db = None  # use default
+
+    p = Pipeline(db=db)
     p.run(from_step=from_step, skip=set(skip), only=only)
 
 
