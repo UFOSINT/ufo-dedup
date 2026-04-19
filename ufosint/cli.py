@@ -11,6 +11,7 @@ Commands are added incrementally as modules are migrated.
 """
 
 import os
+import time
 
 import click
 
@@ -93,15 +94,74 @@ def import_cmd(source, import_all, list_sources):
     imp.run()
 
 
+# ── Analyze command ──
+
+@main.command()
+@click.argument("step", required=False)
+@click.option("--list", "list_steps", is_flag=True, help="List available processors")
+def analyze(step, list_steps):
+    """Run derived analysis pipeline.
+
+    Examples:
+        ufosint analyze              # run all 9 steps
+        ufosint analyze shapes       # run just shape normalization
+        ufosint analyze --list       # list available processors
+    """
+    from ufosint.processors import PROCESSORS, get_processor
+
+    if list_steps:
+        print("\nAvailable processors (in execution order):")
+        for name, cls in PROCESSORS.items():
+            p = cls()
+            deps = ", ".join(p.depends_on) if p.depends_on else "none"
+            print(f"  {name:<20} {p.label:<35} deps: {deps}")
+        print()
+        return
+
+    db = Database()
+
+    if step:
+        try:
+            proc = get_processor(step)
+        except KeyError as e:
+            click.echo(str(e))
+            return
+        print(f"\n[{proc.name}] {proc.label}...")
+        proc.run(db)
+        return
+
+    # Run all in order
+    conn = db.connect()
+
+    # Ensure sighting_analysis rows exist
+    try:
+        conn.execute("""
+            INSERT INTO sighting_analysis (sighting_id)
+            SELECT id FROM sighting
+            WHERE id NOT IN (SELECT sighting_id FROM sighting_analysis)
+        """)
+        conn.commit()
+    except Exception:
+        pass
+
+    import time
+    t0 = time.time()
+    for i, (name, cls) in enumerate(PROCESSORS.items()):
+        proc = cls()
+        print(f"\n[{i+1}/{len(PROCESSORS)}] {proc.label}...")
+        proc.process(conn)
+
+    elapsed = time.time() - t0
+    print(f"\n  Analysis complete in {elapsed:.0f}s ({elapsed/60:.1f} min)")
+    conn.close()
+
+
 # ── Future commands (added in later phases) ──
 # @main.command()
 # def rebuild(): ...
 #
 # @main.command()
 # def geocode(): ...
-#
-# @main.command()
-# def analyze(): ...
 #
 # @main.command()
 # def emotions(): ...
