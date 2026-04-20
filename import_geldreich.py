@@ -3,6 +3,14 @@ Import UFO-search (formerly Geldreich) Majestic Timeline JSON into the unified d
 ~54.7K records from 19 historical source compilations.
 Source: ufo-search.com
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint import geldreich
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import sqlite3
 import json
 import os

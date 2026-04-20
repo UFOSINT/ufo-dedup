@@ -2,6 +2,14 @@
 Import MUFON CSV into the unified database.
 ~138K rows, 7 columns.
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint import mufon
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import sqlite3
 import csv
 import json

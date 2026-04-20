@@ -34,6 +34,14 @@ Defaults:
     --source ../data/output/ufo_unified.db
     --target ../data/output/ufo_public.db
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint export public
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import argparse
 import os
 import sqlite3

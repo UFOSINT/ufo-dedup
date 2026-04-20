@@ -23,6 +23,14 @@ Environment:
 
 Dependencies: requests (for OpenRouter API calls). No torch, no transformers.
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint audit
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 
 import json
 import os

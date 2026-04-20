@@ -26,6 +26,14 @@ Usage:
     python rebuild_db.py --skip-audit   # Skip audit pipeline
     python rebuild_db.py --skip-reddit  # Skip Reddit import
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint rebuild
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import os
 import sys
 import time

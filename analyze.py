@@ -31,6 +31,14 @@ Usage:
     python analyze.py --stats-only # Print current derived stats
     python analyze.py --reset      # Null derived columns and re-run
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint analyze
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import sqlite3
 import os
 import sys

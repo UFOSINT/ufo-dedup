@@ -1,6 +1,6 @@
 # Refactor Plan: `ufo-dedup` → `ufosint` CLI Package
 
-**Status:** Planning
+**Status:** Phases 1-6 complete, merged to main. Cleanup items 3-8 in progress.
 **Branch:** `refactor/ufosint-cli` (from `main` at `b289e75`)
 **Goal:** Transform 26 standalone scripts into a single installable Python package with a unified CLI, shared infrastructure, and plugin architecture.
 

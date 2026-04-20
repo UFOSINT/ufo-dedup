@@ -15,6 +15,14 @@ Usage:
     python spot_check.py --count 500 --workers 10
     python spot_check.py --count 100 --preview     # show sample, don't call LLM
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint spot-check
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 
 import csv
 import json

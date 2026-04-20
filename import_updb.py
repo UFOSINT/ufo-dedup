@@ -3,6 +3,14 @@ Import UPDB (phenomenAInon) CSV into the unified database.
 ~1.9M rows, 9 columns. Selectively skips rows whose 'name' is MUFON or NUFORC
 since we already imported those from their richer original CSVs.
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint import updb
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import sqlite3
 import csv
 import json

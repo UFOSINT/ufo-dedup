@@ -31,6 +31,14 @@ Designed to plug into analyze.py's ANALYSIS_STEPS registry as a late-stage
 step (after text-dependent steps like classify_movement, but order-independent
 from quality_score).
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint emotions
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import json
 import os
 import sqlite3

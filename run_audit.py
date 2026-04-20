@@ -8,6 +8,13 @@
  | |   | |   | |   | |   ) || |   | || |   ) |   | |
  | (___) |___) (___| (__/  )| (___) || (__/  )___) (___
  (_______)\_______/(______/ (_______)(______/ \_______/
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint audit b --workers 15
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
 
   UFO Sighting Database — LLM Audit Pipeline
   Location normalization via Gemini Flash on OpenRouter

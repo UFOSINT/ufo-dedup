@@ -7,6 +7,14 @@ Skips records whose SOURCE field matches SKIP_SOURCES (e.g. 'UFOReportCtr'
 JSON file so their metadata (Hynek, Vallee, shape) can be transferred
 to the canonical NUFORC records by enrich.py.
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint import ufocat
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import sqlite3
 import csv
 import json

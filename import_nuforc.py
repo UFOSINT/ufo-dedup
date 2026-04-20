@@ -2,6 +2,14 @@
 Import NUFORC CSV into the unified database.
 ~159K rows, 18 columns.
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint import nuforc
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import sqlite3
 import csv
 import json

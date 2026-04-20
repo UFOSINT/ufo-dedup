@@ -5,6 +5,13 @@ r"""
  | | | | |_ | | | \___ \| ||  \| | | |
  | |_| |  _|| |_| |___) | || |\  | | |
   \___/|_|   \___/|____/___|_| \_| |_|
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint enrich
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
 
   LLM Field Extraction — Mining structured data from descriptions
 

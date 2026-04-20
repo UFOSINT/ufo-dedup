@@ -18,6 +18,14 @@ Usage:
     python import_reddit.py --stats-only         # print current import stats
     python import_reddit.py --db PATH            # custom DB path
 """
+# ──────────────────────────────────────────────────────────────
+# LEGACY SCRIPT — prefer the unified CLI:
+#   ufosint import reddit
+#
+# This file still works standalone but the canonical implementation
+# is in the ufosint/ package. See: pip install -e . && ufosint --help
+# ──────────────────────────────────────────────────────────────
+
 import csv
 import json
 import os
