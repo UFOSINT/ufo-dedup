@@ -342,8 +342,21 @@ def rebuild(ctx, from_step, skip, only, list_steps, test):
         test_db = os.path.join(Config.project_root(), "data", "test", "test_unified.db")
         os.makedirs(os.path.dirname(test_db), exist_ok=True)
         if os.path.exists(test_db):
-            os.remove(test_db)
-            print(f"  Removed old test DB")
+            try:
+                os.remove(test_db)
+                print(f"  Removed old test DB")
+            except PermissionError:
+                # Another process has it locked — use a timestamped name
+                import time as _time
+                test_db = test_db.replace(".db", f"_{int(_time.time())}.db")
+                print(f"  Old test DB locked — using {os.path.basename(test_db)}")
+        for ext in ("-wal", "-shm"):
+            try:
+                p = test_db.replace(".db", ext)
+                if os.path.exists(p):
+                    os.remove(p)
+            except PermissionError:
+                pass
         print(f"  TEST MODE: writing to {test_db}")
         print(f"  Production DB is UNTOUCHED\n")
         db = Database(test_db)
