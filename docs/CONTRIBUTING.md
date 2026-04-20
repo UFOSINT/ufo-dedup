@@ -1,253 +1,193 @@
 # Contributing — How to Extend the Pipeline
 
-Three common extension paths, with worked examples. Each one is tested against the actual codebase as of the v0.13 build (618,316 sightings, 6 sources).
+Four common extension paths. The codebase uses the `ufosint` CLI package (`pip install -e .`) with a plugin architecture — adding new sources or analysis steps is one file + one registration line.
 
-| You want to add… | Read section… | Approximate effort |
+| You want to add... | Read section... | Approximate effort |
 |---|---|---|
-| A new source dataset | [§1](#1-add-a-new-source-dataset) | ~2 hours (depends on source format) |
-| A new analysis step | [§2](#2-add-a-new-analysis-step) | ~30 min for the function, ~30 min for tests |
+| A new source dataset | [§1](#1-add-a-new-source-dataset) | ~1 hour (scaffold + implement `parse_row`) |
+| A new analysis step | [§2](#2-add-a-new-analysis-step) | ~30 min for the processor, ~30 min for tests |
 | A new derived column | [§3](#3-add-a-new-derived-column) | Folds into either §1 or §2 above |
+| A new LLM enrichment | [§4](#4-add-a-new-llm-enrichment) | ~1 hour (prompt + cache + CLI wiring) |
 
 ---
 
 ## 1. Add a new source dataset
 
-Adding a 6th source (say, a hypothetical "AARO public release CSV") follows the same pattern as the existing 5 importers. Walk through:
+Adding a new source (e.g., AARO) uses the `ufosint scaffold` command to generate boilerplate:
 
-### a. Create the importer
-
-Copy `import_nuforc.py` as a template:
+### a. Generate the importer
 
 ```bash
-cp import_nuforc.py import_aaro.py
+ufosint scaffold aaro
 ```
 
-Edit:
+This creates `ufosint/importers/aaro.py` with a template `AaroImporter` class. Edit it:
 
 ```python
-# import_aaro.py
-DB_PATH = os.path.join(os.path.dirname(__file__), "ufo_unified.db")
-DATA_DIR = os.environ.get(
-    "UFOSINT_DATA_DIR",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "raw"),
-)
-CSV_PATH = os.path.join(DATA_DIR, "AARO", "aaro_public.csv")  # adjust filename
+# ufosint/importers/aaro.py
+class AaroImporter(Importer):
+    source_name = "AARO"
 
-def parse_aaro_date(s):
-    """Source-specific date parser. Return ISO 8601 or None."""
-    # ... your logic here ...
+    @property
+    def file_path(self):
+        return os.path.join(Config.raw_data_dir(), "AARO", "aaro_public.csv")
 
-def parse_aaro_location(s):
-    """Source-specific location parser. Return (raw_text, city, state, country)."""
-    # ... your logic here ...
-
-def run_import():
-    """Standard entry point. Called by rebuild_db.py via reflection."""
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    # ... read CSV, insert into location and sighting tables ...
-    conn.commit()
-    conn.close()
+    def parse_row(self, raw):
+        """Parse one CSV row into (location_dict, sighting_dict)."""
+        location = {
+            "raw_text": raw.get("location") or None,
+            "city": raw.get("city") or None,
+            "state": raw.get("state") or None,
+            "country": raw.get("country") or None,
+        }
+        sighting = {
+            "source_record_id": raw.get("case_id") or None,
+            "date_event": raw.get("date") or None,
+            "description": raw.get("description") or None,
+            "shape": raw.get("shape") or None,
+        }
+        return location, sighting
 ```
 
-The importer function MUST be named `run_import()` — `rebuild_db.py:run_script()` looks for that name via `getattr`.
+The base class handles: reading the file, batch inserts, progress display, source_db_id lookup, location dedup, and error handling. You only implement `parse_row()`.
 
-### b. Register the source in the schema seed
+### b. Register the importer
 
-Edit `create_schema.py` and add to the `sources` list:
+Add one line to `ufosint/importers/__init__.py`:
 
 ```python
-sources = [
-    ("MUFON", coll_map["PUBLIUS"], ...),
-    ("NUFORC", coll_map["PUBLIUS"], ...),
-    ("UFOCAT", coll_map["UFOCAT"], ...),
-    ("UPDB", coll_map["PUBLIUS"], ...),
-    ("UFO-search", coll_map["GELDREICH"], ...),
-    ("AARO", coll_map["PUBLIUS"], "AARO public release", "https://aaro.mil", None),
-]
+from ufosint.importers.aaro import AaroImporter
+IMPORTERS["aaro"] = AaroImporter
 ```
 
-The source gets `id=6` automatically (autoincrement). Document this in your importer:
+### c. Register the source in the schema
+
+Add to `create_schema.py`'s `sources` list:
 
 ```python
-SOURCE_DB_ID = 6  # AARO. Confirmed in create_schema.py:264-269
+("AARO", coll_map["PUBLIUS"], "AARO public release", "https://aaro.mil", None),
 ```
 
-### c. Wire into rebuild_db.py
+### d. Place your data and run
 
-Add a step:
+```bash
+# Place source file
+cp aaro_public.csv <raw_data_dir>/AARO/aaro_public.csv
 
-```python
-step(7, "Import AARO public release")
-run_script('import_aaro')
+# Import
+ufosint import aaro
+
+# Verify
+ufosint status
 ```
-
-Renumber the subsequent steps. Update the final stats block to count AARO records.
-
-### d. Update data/raw/README.md
-
-Add an "AARO" section with acquisition instructions and expected schema.
 
 ### e. Add a test
 
-Copy a test pattern from `tests/test_etl.py` — typically:
-
 ```python
-def test_aaro_date_parsing():
-    from import_aaro import parse_aaro_date
-    assert parse_aaro_date("2023-08-15") == "2023-08-15"
-    assert parse_aaro_date("Q3 2023") is None  # unparseable
+# tests/test_ufosint_package.py (or a new test file)
+class TestAaroParser:
+    def test_parse_date(self):
+        from ufosint.importers.aaro import parse_aaro_date
+        assert parse_aaro_date("2023-08-15") == ("2023-08-15", "2023-08-15")
 ```
 
-### f. Update the dedup engine
+### f. Update dedup (if source overlaps with existing ones)
 
-If your new source overlaps with existing ones (very likely — most aggregators include NUFORC content), add a Tier 2 sub-tier in `dedup.py`:
-
-```python
-# Tier 2e: AARO ↔ MUFON/NUFORC/UFOCAT
-match_pairs(SRC_AARO, SRC_MUFON, "tier2e_aaro_mufon",
-            match_key=("date", "city", "state"))
-# ... etc for other source pairs ...
-```
-
-The `match_pairs` helper handles candidate generation and similarity scoring; you only specify the match-key strategy.
-
-If your source has known import-time duplicates with other sources (e.g. AARO republishes NUFORC records with an `aaro_origin=NUFORC` tag), use the same enrichment-sidecar pattern as `import_ufocat.py`:
-
-```python
-ENRICHMENT_PATH = os.path.join(os.path.dirname(__file__), "aaro_enrichment.jsonl")
-# Skip rows where aaro_origin in {'NUFORC', 'MUFON'}, write to sidecar
-# Then enrich.py picks up the sidecar and transfers any unique metadata
-```
+If your source overlaps with NUFORC/MUFON, add a Tier 2 sub-tier in `dedup.py`. Or use the enrichment-sidecar pattern from `ufosint/importers/ufocat.py` (override `should_skip_row()` and `on_skip()`).
 
 ---
 
 ## 2. Add a new analysis step
 
-Adding a new derived analysis (say, sky-condition extraction) leverages the `ANALYSIS_STEPS` plug-in registry:
+Adding a new processor (e.g., sky-condition extraction) uses the `Processor` base class:
 
 ### a. Add the column(s) to the schema
 
 In `create_schema.py`, add to the `sighting` DDL:
 
-```python
--- v0.12 sky conditions
+```sql
 sky_condition       TEXT,       -- clear|cloudy|partly_cloudy|stormy|unknown
-visibility_estimate INTEGER,    -- 0-100, miles
 ```
 
-And update the index list if you want it filterable:
+### b. Create the processor
+
+Create `ufosint/processors/sky.py`:
 
 ```python
-"CREATE INDEX IF NOT EXISTS idx_sighting_sky ON sighting(sky_condition)",
-```
+from ufosint.processors.base import Processor, executemany_batched
+import re
 
-### b. Write the analysis function
-
-In `analyze.py` (or a new module imported into it), add:
-
-```python
 SKY_PATTERNS = {
-    "clear":         [r"\bclear (?:sky|night|day)\b", r"\bcloudless\b"],
-    "cloudy":        [r"\bovercast\b", r"\bcloudy\b", r"\bgrey sky\b"],
-    "partly_cloudy": [r"\bpartly cloudy\b", r"\bscattered clouds\b"],
-    "stormy":        [r"\bstorm\b", r"\bthunder\b", r"\blightning\b", r"\brain\b"],
+    "clear":   [r"\bclear (?:sky|night|day)\b", r"\bcloudless\b"],
+    "cloudy":  [r"\bovercast\b", r"\bcloudy\b"],
+    "stormy":  [r"\bstorm\b", r"\bthunder\b", r"\blightning\b"],
 }
-_SKY_RE = {k: [re.compile(p, re.IGNORECASE) for p in v]
-           for k, v in SKY_PATTERNS.items()}
+_SKY_RE = {k: [re.compile(p, re.I) for p in v] for k, v in SKY_PATTERNS.items()}
 
+class SkyClassifier(Processor):
+    name = "sky"
+    label = "Classifying sky conditions"
 
-def classify_sky_conditions(conn):
-    """v0.12: regex-extract sky condition from narrative text."""
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, COALESCE(description, summary)
-        FROM sighting
-        WHERE description IS NOT NULL OR summary IS NOT NULL
-    """)
-    rows = cur.fetchall()
-    updates = []
-    for sid, text in rows:
-        condition = "unknown"
-        for cond, patterns in _SKY_RE.items():
-            if any(p.search(text) for p in patterns):
-                condition = cond
-                break
-        updates.append((condition, sid))
-    _executemany_batched(
-        conn,
-        "UPDATE sighting SET sky_condition = ? WHERE id = ?",
-        updates,
-    )
-    print(f"  Sky conditions classified: {len(updates):,} rows")
-```
-
-### c. Register in ANALYSIS_STEPS
-
-One line in `analyze.py`:
-
-```python
-ANALYSIS_STEPS = [
-    ("shapes",        normalize_and_cluster_shapes, "Normalizing shapes"),
-    ("movement",      classify_movement,            "Classifying movement/behavior"),
-    # ... existing steps ...
-    ("topic",         run_topic_modeling,           "Topic modeling"),
-    ("sky",           classify_sky_conditions,      "Classifying sky conditions"),  # NEW
-]
-```
-
-### d. Add the column to DERIVED_SIGHTING_COLUMNS
-
-So `analyze.reset_analysis()` clears it on `--reset`:
-
-```python
-DERIVED_SIGHTING_COLUMNS = [
-    # ... existing columns ...
-    "emotion_7_joy",
-    "sky_condition", "visibility_estimate",  # NEW
-]
-```
-
-### e. Add a test
-
-```python
-class TestSkyConditions:
-    def test_clear_sky(self, analysis_db):
-        conn, _ = analysis_db
-        sid = _insert_sighting(conn, description="A clear night, no clouds.")
-        analyze.classify_sky_conditions(conn)
+    def process(self, conn):
         cur = conn.cursor()
-        cur.execute("SELECT sky_condition FROM sighting WHERE id = ?", (sid,))
-        assert cur.fetchone()[0] == "clear"
-
-    def test_storm(self, analysis_db):
-        conn, _ = analysis_db
-        sid = _insert_sighting(conn, description="During a thunderstorm I saw...")
-        analyze.classify_sky_conditions(conn)
-        cur = conn.cursor()
-        cur.execute("SELECT sky_condition FROM sighting WHERE id = ?", (sid,))
-        assert cur.fetchone()[0] == "stormy"
+        cur.execute("SELECT id, COALESCE(description, summary) FROM sighting WHERE description IS NOT NULL")
+        updates = []
+        for sid, text in cur.fetchall():
+            condition = "unknown"
+            for cond, patterns in _SKY_RE.items():
+                if any(p.search(text) for p in patterns):
+                    condition = cond
+                    break
+            updates.append((condition, sid))
+        executemany_batched(conn, "UPDATE sighting SET sky_condition = ? WHERE id = ?", updates)
+        print(f"  Sky conditions classified: {len(updates):,} rows")
 ```
 
-Done. The next `python rebuild_db.py` will run your new step automatically as part of step 12.
+### c. Register in the processor registry
 
-### Where in the order should it go?
+One line in `ufosint/processors/__init__.py`:
 
-Position matters if your step depends on values another step writes. The current order:
-
-```
-1. shapes              (no deps)
-2. movement            (no deps)
-3. colors              (no deps)
-4. sentiment           (depends on sentiment_analysis table)
-5. duration            (no deps)
-6. public_fields       (no deps — populates lat/lng/datetime/has_*)
-7. quality             (depends on 1-6 — reads has_media, has_movement_mentioned, etc.)
-8. hoax                (depends on 7 — reads richness_score)
-9. topic               (no deps; STUB)
+```python
+from ufosint.processors.sky import SkyClassifier
+PROCESSORS["sky"] = SkyClassifier
 ```
 
-If your new step writes a value that the quality score should use, insert it before step 7 and add it to the quality formula. Otherwise append it at the end.
+### d. Add a test
+
+```python
+class TestSkyClassifier:
+    def test_clear_sky(self):
+        from ufosint.processors.sky import SkyClassifier
+        # ... set up in-memory DB, insert row, run processor, assert
+```
+
+### e. Run it
+
+```bash
+ufosint analyze sky          # run just your new processor
+ufosint analyze --list       # verify it shows up
+ufosint analyze              # run all (yours included)
+```
+
+### Processor execution order
+
+Position matters if your step depends on values another step writes:
+
+```bash
+$ ufosint analyze --list
+
+  shapes               Normalizing shapes                  deps: none
+  movement             Classifying movement/behavior       deps: none
+  colors               Extracting colors                   deps: none
+  sentiment_derive     Deriving sentiment summary          deps: none
+  duration             Parsing durations and bucketing     deps: none
+  public_fields        Deriving public fields              deps: none
+  quality              Calculating quality score           deps: shapes, movement, ...
+  hoax                 Flagging potential hoaxes           deps: quality
+  topic                Topic modeling                      deps: none
+```
+
+If your processor writes a value the quality score should use, set `depends_on = []` and place it before `quality` in the registry. The `quality` processor's `depends_on` list determines what must run first.
 
 ---
 
@@ -279,6 +219,52 @@ def my_new_jsonfield(conn):
 ```
 
 Then add `my_field` to the `sighting_analysis` DDL in `create_schema.py`. Doesn't affect the public binary buffer (it's a side table, not on `sighting`), so the dev team's app changes are zero.
+
+---
+
+## 4. Add a new LLM enrichment
+
+LLM enrichments follow the **cache + replay** pattern so expensive API calls are one-time:
+
+### a. Write your enrichment logic
+
+Use the shared `LLMClient` and `ResultCache`:
+
+```python
+from ufosint.llm import LLMClient, ResultCache
+from ufosint.llm.prompts import MY_SYSTEM_PROMPT
+
+cache = ResultCache("my_enrichment", columns=["sighting_id", "result_field"])
+client = LLMClient(workers=15)
+
+# Process records, cache results
+results = client.batch_process(items, build_prompt, parse_response)
+cache.append_rows([{"sighting_id": sid, "result_field": val} for ...])
+```
+
+### b. Add a replay function
+
+```python
+def replay_my_enrichment(db_path):
+    rows = cache.load()
+    # Apply rows to DB (NULL fields only)
+```
+
+### c. Wire into the pipeline
+
+Add to `ufosint/pipeline.py` in `_step_replay()` — cached results are automatically replayed on rebuild.
+
+### d. Add a CLI command (optional)
+
+```python
+# In ufosint/cli.py
+@main.command("my-enrichment")
+def my_enrichment():
+    """Run my LLM enrichment."""
+    ...
+```
+
+**Key principle:** the live LLM run produces a cache CSV. The cache CSV is replayed on every rebuild. No API key needed for reproduction.
 
 ---
 
@@ -331,7 +317,7 @@ Run before committing:
 pytest tests/ -q
 ```
 
-Should report `369 passed` (current count). Add tests for your new code.
+Should report `446 passed` (current count). Add tests for your new code.
 
 ## Things to NOT do
 

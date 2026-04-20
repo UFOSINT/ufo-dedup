@@ -97,12 +97,15 @@ class Database:
             return report
 
         # Per source
-        cur.execute("""
-            SELECT sd.name, COUNT(*) FROM sighting s
-            JOIN source_database sd ON s.source_db_id = sd.id
-            GROUP BY sd.name ORDER BY COUNT(*) DESC
-        """)
-        report["sources"] = {name: count for name, count in cur.fetchall()}
+        try:
+            cur.execute("""
+                SELECT sd.name, COUNT(*) FROM sighting s
+                JOIN source_database sd ON s.source_db_id = sd.id
+                GROUP BY sd.name ORDER BY COUNT(*) DESC
+            """)
+            report["sources"] = {name: count for name, count in cur.fetchall()}
+        except sqlite3.OperationalError:
+            report["sources"] = {}
 
         # Coverage metrics
         coverage = {}
