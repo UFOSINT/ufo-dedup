@@ -26,8 +26,6 @@ Usage:
 # is in the ufosint/ package. See: pip install -e . && ufosint --help
 # ──────────────────────────────────────────────────────────────
 
-import csv
-import json
 import os
 import sqlite3
 import sys

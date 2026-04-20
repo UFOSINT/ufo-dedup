@@ -15,11 +15,7 @@ to the canonical NUFORC records by enrich.py.
 # is in the ufosint/ package. See: pip install -e . && ufosint --help
 # ──────────────────────────────────────────────────────────────
 
-import sqlite3
-import csv
-import json
 import os
-import sys
 import re
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "output", "ufo_unified.db")

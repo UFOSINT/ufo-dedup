@@ -11,11 +11,8 @@ Source: ufo-search.com
 # is in the ufosint/ package. See: pip install -e . && ufosint --help
 # ──────────────────────────────────────────────────────────────
 
-import sqlite3
-import json
 import os
 import re
-import hashlib
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "output", "ufo_unified.db")
 DATA_DIR = os.environ.get(

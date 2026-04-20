@@ -41,10 +41,10 @@ Usage:
 # Prefer: pip install -e . && ufosint analyze
 # ──────────────────────────────────────────────────────────────
 
-import sqlite3
-import os
-import sys
 import json
+import os
+import sqlite3
+import sys
 import time
 from collections import Counter
 

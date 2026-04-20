@@ -10,9 +10,6 @@ Import MUFON CSV into the unified database.
 # is in the ufosint/ package. See: pip install -e . && ufosint --help
 # ──────────────────────────────────────────────────────────────
 
-import sqlite3
-import csv
-import json
 import os
 import re
 
