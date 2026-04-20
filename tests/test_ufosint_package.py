@@ -492,6 +492,76 @@ class TestDisplay:
 
 
 # ============================================================
+# Export
+# ============================================================
+
+class TestExportModule:
+    def test_import_run_export(self):
+        from ufosint.export.public_db import run_export
+        assert callable(run_export)
+
+    def test_public_tables_set(self):
+        from ufosint.export.public_db import PUBLIC_TABLES
+        assert "sighting" in PUBLIC_TABLES
+        assert "location" in PUBLIC_TABLES
+        assert "sighting_analysis" in PUBLIC_TABLES
+
+    def test_fmt_bytes(self):
+        from ufosint.export.public_db import fmt_bytes
+        assert "KB" in fmt_bytes(2048)
+        assert "MB" in fmt_bytes(2 * 1024 * 1024)
+        assert "B" in fmt_bytes(500)
+
+
+# ============================================================
+# Inlined Processor Constants
+# ============================================================
+
+class TestProcessorConstants:
+    def test_movement_behavior_keywords(self):
+        from ufosint.processors.movement import BEHAVIOR_KEYWORDS
+        assert "hovering" in BEHAVIOR_KEYWORDS
+        assert "silent" in BEHAVIOR_KEYWORDS
+        assert len(BEHAVIOR_KEYWORDS) == 14
+
+    def test_movement_categories(self):
+        from ufosint.processors.movement import MOVEMENT_CATEGORY_PATTERNS
+        assert "hovering" in MOVEMENT_CATEGORY_PATTERNS
+        assert "erratic" in MOVEMENT_CATEGORY_PATTERNS
+        assert len(MOVEMENT_CATEGORY_PATTERNS) == 10
+
+    def test_color_words(self):
+        from ufosint.processors.colors import COLOR_WORDS
+        assert "red" in COLOR_WORDS
+        assert "metallic silver" in COLOR_WORDS
+
+    def test_quality_fields(self):
+        from ufosint.processors.quality import QUALITY_STRUCTURED_FIELDS
+        assert "shape" in QUALITY_STRUCTURED_FIELDS
+        assert "hynek" in QUALITY_STRUCTURED_FIELDS
+        assert len(QUALITY_STRUCTURED_FIELDS) == 9
+
+    def test_quality_caps(self):
+        from ufosint.processors.quality import (
+            UNKNOWN_DATE_CAP, UNKNOWN_DATE_CAP_RICH,
+        )
+        assert UNKNOWN_DATE_CAP == 15
+        assert UNKNOWN_DATE_CAP_RICH == 35
+
+    def test_hoax_weights(self):
+        from ufosint.processors.hoax import HOAX_WEIGHTS
+        assert "very_short_text" in HOAX_WEIGHTS
+        assert "generic_phrasing" in HOAX_WEIGHTS
+        assert len(HOAX_WEIGHTS) == 5
+
+    def test_sentiment_emotion_keys(self):
+        from ufosint.processors.sentiment import EMOTION_KEYS
+        assert "joy" in EMOTION_KEYS
+        assert "fear" in EMOTION_KEYS
+        assert len(EMOTION_KEYS) == 8
+
+
+# ============================================================
 # Pipeline
 # ============================================================
 
