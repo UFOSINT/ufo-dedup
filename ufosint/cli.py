@@ -276,10 +276,8 @@ def export(target):
         ufosint export public      # clean public SQLite
     """
     if target == "public":
-        import sys as _sys
-        _sys.path.insert(0, Config.project_root())
-        import export_public
-        export_public.main()
+        from ufosint.export.public_db import run_export
+        run_export()
 
 
 # ── Emotions command ──

@@ -288,6 +288,9 @@ def vacuum(conn):
 # ============================================================
 
 def main():
+    """Delegate to the ufosint.export.public_db package module."""
+    from ufosint.export.public_db import run_export
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", default=DEFAULT_SOURCE,
                         help=f"Source analysis DB (default: {DEFAULT_SOURCE})")
@@ -301,84 +304,15 @@ def main():
                         help="Refuse to run if target already exists (safety flag for scripts)")
     args = parser.parse_args()
 
-    source = os.path.abspath(args.source)
-    target = os.path.abspath(args.target)
+    if args.keep_target and os.path.exists(os.path.abspath(args.target)):
+        sys.exit(f"ERROR: target exists and --keep-target was passed: {args.target}")
 
-    if source == target:
-        sys.exit("ERROR: --source and --target must differ. Export is non-destructive on the source.")
-
-    if args.keep_target and os.path.exists(target):
-        sys.exit(f"ERROR: target exists and --keep-target was passed: {target}")
-
-    print(f"Source: {source}")
-    print(f"Target: {target}")
-    print()
-
-    total = check_source(source)
-    src_size = os.path.getsize(source)
-    print(f"Source DB is valid. {total:,} sightings, {fmt_bytes(src_size)}.")
-
-    # 1. Copy source to target (removes any existing target file)
-    if os.path.exists(target):
-        print(f"Removing existing target ({fmt_bytes(os.path.getsize(target))})...")
-        os.remove(target)
-    print("Copying source -> target via sqlite3.backup...")
-    t0 = time.perf_counter()
-    sqlite_backup(source, target)
-    print(f"  done in {time.perf_counter() - t0:.1f}s")
-
-    # 2. On the target copy: drop private tables, strip columns, vacuum
-    conn = sqlite3.connect(target)
-    try:
-        print()
-        print("Stripping raw text columns from sighting...")
-        dropped_cols = strip_sighting_columns(conn, extra_optional=args.drop_optional_free_text)
-        if dropped_cols:
-            for col in dropped_cols:
-                print(f"    DROP COLUMN {col}")
-        else:
-            print("    (nothing to drop — source was already stripped)")
-
-        print()
-        print("Dropping private-only tables...")
-        dropped_tables = drop_private_tables(conn)
-        if dropped_tables:
-            for t in dropped_tables:
-                print(f"    DROP TABLE {t}")
-        else:
-            print("    (nothing to drop)")
-
-        if args.drop_location_raw_text:
-            print()
-            print("Dropping location.raw_text...")
-            if drop_location_raw_text(conn):
-                print("    DROP COLUMN raw_text")
-            else:
-                print("    (already gone)")
-
-        print()
-        print("Running VACUUM to reclaim disk...")
-        t0 = time.perf_counter()
-        vacuum(conn)
-        print(f"  done in {time.perf_counter() - t0:.1f}s")
-    finally:
-        conn.close()
-
-    # 3. Report
-    tgt_size = os.path.getsize(target)
-    delta = src_size - tgt_size
-    pct = 100 * delta / src_size if src_size else 0
-    print()
-    print("=" * 60)
-    print("  EXPORT COMPLETE")
-    print("=" * 60)
-    print(f"  Source:  {fmt_bytes(src_size):>12}")
-    print(f"  Public:  {fmt_bytes(tgt_size):>12}")
-    print(f"  Delta:   {fmt_bytes(delta):>12}  ({pct:.1f}% reclaimed)")
-    print()
-    print(f"  Public DB: {target}")
-    print("  Ready for migrate_sqlite_to_pg.py -> Azure Postgres.")
-    return 0
+    return run_export(
+        source=args.source,
+        target=args.target,
+        drop_raw_text=args.drop_location_raw_text,
+        drop_optional=args.drop_optional_free_text,
+    )
 
 
 if __name__ == "__main__":
