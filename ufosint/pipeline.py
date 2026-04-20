@@ -62,8 +62,8 @@ class Pipeline:
         """Override DB_PATH in legacy modules to use our db_path.
 
         This is the bridge between the old scripts (hardcoded paths)
-        and the new architecture (configurable paths). Removed once
-        all modules are fully migrated.
+        and the new architecture (configurable paths). Most modules
+        are now migrated and accept db_path as a parameter.
         """
         for mod_name in [
             "create_schema", "geocode", "sentiment", "enrich", "dedup",
@@ -135,9 +135,8 @@ class Pipeline:
     # these will be replaced with calls to the new OOP classes.
 
     def _step_schema(self):
-        import create_schema
-        create_schema.DB_PATH = self.db_path
-        create_schema.create_schema(self.db_path)
+        from ufosint.schema import create_schema
+        create_schema(self.db_path)
         self._patch_legacy_db_path()
 
     def _step_ufocat(self):
@@ -169,42 +168,32 @@ class Pipeline:
             print(f"  Reddit CSV not found — skipping.")
 
     def _step_fixes(self):
-        import rebuild_db
-        rebuild_db.DB_PATH = self.db_path
-        rebuild_db.apply_data_fixes()
+        from ufosint.fixes import apply_data_fixes
+        apply_data_fixes(self.db_path)
 
     def _step_geocode1(self):
-        import geocode
-        geocode.DB_PATH = self.db_path
-        geocode.run_geocoding(self.db_path)
+        from ufosint.processors.geocoder import run_geocoding
+        run_geocoding(self.db_path)
 
     def _step_audit(self):
-        import audit as audit_mod
-        audit_mod.DB_PATH = self.db_path
-        audit_mod.run_audit_pipeline(self.db_path)
+        from ufosint.llm.audit import run_audit_pipeline
+        run_audit_pipeline(self.db_path)
 
     def _step_geocode2(self):
-        import geocode
-        geocode.DB_PATH = self.db_path
-        geocode.run_geocoding(self.db_path)
+        from ufosint.processors.geocoder import run_geocoding
+        run_geocoding(self.db_path)
 
     def _step_enrich_nuforc(self):
-        import enrich
-        enrich.DB_PATH = self.db_path
-        enrich.run_enrichment()
+        from ufosint.processors.enrich_nuforc import run_enrichment
+        run_enrichment(self.db_path)
 
     def _step_dedup(self):
-        import dedup
-        dedup.DB_PATH = self.db_path
-        old_argv = sys.argv
-        sys.argv = ["dedup.py"]
-        dedup.main()
-        sys.argv = old_argv
+        from ufosint.processors.dedup import run_dedup
+        run_dedup(self.db_path)
 
     def _step_sentiment(self):
-        import sentiment
-        sentiment.DB_PATH = self.db_path
-        sentiment.run_sentiment(self.db_path)
+        from ufosint.processors.sentiment_analysis import run_sentiment
+        run_sentiment(self.db_path)
 
     def _step_analyze(self):
         from ufosint.processors import PROCESSORS
@@ -228,9 +217,9 @@ class Pipeline:
 
     def _step_replay(self):
         # Replay emotion cache
-        import emotions as emo_mod
-        if os.path.exists(emo_mod.EMOTION_CACHE_CSV):
-            emo_mod.replay_emotion_cache(self.db_path)
+        from ufosint.processors.emotions import replay_emotion_cache, EMOTION_CACHE_CSV
+        if os.path.exists(EMOTION_CACHE_CSV):
+            replay_emotion_cache(self.db_path)
         else:
             print("  No emotion cache — run `ufosint emotions` to generate")
 
@@ -238,8 +227,8 @@ class Pipeline:
         extract_csv = Config.cache_path("llm_field_extractions.csv")
         if os.path.exists(extract_csv):
             print("  Replaying LLM field extractions...")
-            import run_enrich
-            run_enrich.apply_extractions(self.db_path)
+            from ufosint.llm.extractor import apply_extractions
+            apply_extractions(self.db_path)
         else:
             print("  No extraction cache — run `ufosint enrich` to generate")
 
@@ -247,9 +236,8 @@ class Pipeline:
         bundle = os.path.join(Config.project_root(), "..", "uap-gerb-integration-bundle.zip")
         if os.path.exists(bundle):
             print("  Running Gerb overlay...")
-            import gerb_overlay
-            gerb_overlay.DB_PATH = self.db_path
-            gerb_overlay.run_gerb_overlay(self.db_path, bundle)
+            from ufosint.processors.nuclear import run_gerb_overlay
+            run_gerb_overlay(self.db_path, bundle)
         else:
             print("  No Gerb bundle — skipping nuclear proximity")
 

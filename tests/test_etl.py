@@ -32,7 +32,7 @@ from import_updb import (
 from import_geldreich import (
     parse_geldreich_date,
 )
-from create_schema import create_schema
+from ufosint.schema import create_schema
 from tests.conftest import insert_test_sighting
 
 
@@ -115,7 +115,7 @@ class TestSchemaCreation:
 
     def test_source_database_ids_match_constants(self, schema_db):
         """Verify the source_database IDs match the SRC_* constants in dedup.py."""
-        from dedup import SRC_MUFON, SRC_NUFORC, SRC_UFOCAT, SRC_UPDB, SRC_UFOSEARCH
+        from ufosint.processors.dedup import SRC_MUFON, SRC_NUFORC, SRC_UFOCAT, SRC_UPDB, SRC_UFOSEARCH
         cur = schema_db.cursor()
         cur.execute("SELECT id, name FROM source_database")
         db_map = {name: id for id, name in cur.fetchall()}
@@ -537,7 +537,7 @@ class TestDataFixLongitudeSign:
         clean_db.commit()
 
         # Run the longitude fix SQL (inline version of Fix 1a from rebuild_db.py)
-        from rebuild_db import US_CA_STATES
+        from ufosint.fixes import US_CA_STATES
         state_list = ','.join(f"'{s}'" for s in US_CA_STATES)
         cur.execute(f"""
             UPDATE location SET longitude = -longitude
@@ -568,7 +568,7 @@ class TestDataFixLongitudeSign:
         )
         clean_db.commit()
 
-        from rebuild_db import US_CA_STATES
+        from ufosint.fixes import US_CA_STATES
         state_list = ','.join(f"'{s}'" for s in US_CA_STATES)
         cur.execute(f"""
             UPDATE location SET longitude = -longitude
@@ -599,7 +599,7 @@ class TestDataFixLongitudeSign:
         )
         clean_db.commit()
 
-        from rebuild_db import US_CA_STATES
+        from ufosint.fixes import US_CA_STATES
         state_list = ','.join(f"'{s}'" for s in US_CA_STATES)
         cur.execute(f"""
             UPDATE location SET longitude = -longitude
@@ -631,7 +631,7 @@ class TestDataFixLongitudeSign:
         )
         clean_db.commit()
 
-        from rebuild_db import US_CA_STATES
+        from ufosint.fixes import US_CA_STATES
         state_list = ','.join(f"'{s}'" for s in US_CA_STATES)
         cur.execute(f"""
             UPDATE location SET longitude = -longitude
@@ -748,7 +748,7 @@ class TestDataFixCountryNormalization:
         clean_db.commit()
 
         # Run the fix
-        from rebuild_db import apply_data_fixes  # noqa: F811
+        from ufosint.fixes import apply_data_fixes  # noqa: F811
         country_map = {
             'USA': 'US', 'United States': 'US', 'United States of America': 'US',
             'United Kingdom': 'GB', 'UK': 'GB', 'England': 'GB',

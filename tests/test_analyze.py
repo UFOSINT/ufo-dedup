@@ -8,7 +8,7 @@ import json
 import sqlite3
 import pytest
 
-from create_schema import create_schema
+from ufosint.schema import create_schema
 import analyze
 
 

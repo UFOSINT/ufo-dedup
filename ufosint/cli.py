@@ -188,27 +188,28 @@ def audit(tier, fix_geocodes, replay, pipeline, stats, limit, workers, preview):
         ufosint audit --replay             # replay cached fixes
         ufosint audit --pipeline           # full deterministic (Tier A + replay)
     """
-    # Delegate to existing audit.py during transition
-    import sys as _sys
-    _sys.path.insert(0, Config.project_root())
-    import audit as audit_mod
+    from ufosint.llm.audit import (
+        print_stats as audit_stats, tier_a_geocode_verify,
+        tier_b_location_normalize, tier_c_data_mine,
+        replay_tier_b, run_audit_pipeline,
+    )
 
     if stats:
-        audit_mod.print_stats(Config.db_path())
+        audit_stats(Config.db_path())
     elif fix_geocodes:
-        audit_mod.tier_a_geocode_verify(Config.db_path(), fix=True)
+        tier_a_geocode_verify(Config.db_path(), fix=True)
     elif replay:
-        audit_mod.replay_tier_b(Config.db_path())
+        replay_tier_b(Config.db_path())
     elif pipeline:
-        audit_mod.run_audit_pipeline(Config.db_path())
+        run_audit_pipeline(Config.db_path())
     elif tier == "a":
-        audit_mod.tier_a_geocode_verify(Config.db_path(), fix=False)
+        tier_a_geocode_verify(Config.db_path(), fix=False)
     elif tier == "b":
         w = workers or Config.llm_workers()
-        audit_mod.tier_b_location_normalize(
+        tier_b_location_normalize(
             Config.db_path(), limit=limit, preview=preview, workers=w)
     elif tier == "c":
-        audit_mod.tier_c_data_mine(
+        tier_c_data_mine(
             Config.db_path(), limit=limit, preview=preview)
     else:
         click.echo("Usage: ufosint audit <a|b|c> | --fix-geocodes | --replay | --pipeline | --stats")
@@ -229,20 +230,20 @@ def enrich(limit, workers, apply, stats):
         ufosint enrich --apply             # apply cached results to DB
         ufosint enrich --stats             # show status
     """
-    import sys as _sys
-    _sys.path.insert(0, Config.project_root())
-    import run_enrich
+    from ufosint.llm.extractor import (
+        print_stats as enrich_stats, apply_extractions, run_extraction,
+    )
 
     if stats:
-        run_enrich.print_stats()
+        enrich_stats()
     elif apply:
-        run_enrich.apply_extractions()
+        apply_extractions()
     else:
         w = workers or Config.llm_workers()
         if not Config.openrouter_api_key():
             click.echo("ERROR: OPENROUTER_API_KEY not set")
             return
-        run_enrich.run_extraction(limit=limit, workers=w)
+        run_extraction(limit=limit, workers=w)
 
 
 # ── Spot-check command ──
@@ -258,11 +259,9 @@ def spot_check(count, workers, preview):
         ufosint spot-check --count 100 --preview
         ufosint spot-check --count 500
     """
-    import sys as _sys
-    _sys.path.insert(0, Config.project_root())
-    import spot_check as sc
+    from ufosint.llm.spot_check import run_spot_check
 
-    sc.run_spot_check(count=count, workers=workers, preview=preview)
+    run_spot_check(count=count, workers=workers, preview=preview)
 
 
 # ── Export command ──
@@ -294,18 +293,19 @@ def emotions(stats, export_cache, replay):
         ufosint emotions --stats      # show coverage
         ufosint emotions --replay     # replay from cache (no GPU needed)
     """
-    import sys as _sys
-    _sys.path.insert(0, Config.project_root())
-    import emotions as emo_mod
+    from ufosint.processors.emotions import (
+        print_stats as emo_stats, export_emotion_cache,
+        replay_emotion_cache, run_emotions,
+    )
 
     if stats:
-        emo_mod.print_stats(Config.db_path())
+        emo_stats(Config.db_path())
     elif export_cache:
-        emo_mod.export_emotion_cache(Config.db_path())
+        export_emotion_cache(Config.db_path())
     elif replay:
-        emo_mod.replay_emotion_cache(Config.db_path())
+        replay_emotion_cache(Config.db_path())
     else:
-        emo_mod.run_emotions(Config.db_path())
+        run_emotions(Config.db_path())
 
 
 # ── Rebuild command ──
@@ -547,23 +547,21 @@ def cache_list():
 @click.pass_context
 def cache_replay(ctx):
     """Replay all cached results into the database (no API/GPU needed)."""
-    import sys as _sys
-    _sys.path.insert(0, Config.project_root())
     db = _get_db(ctx)
 
     print(f"\n  Replaying caches into {db.path}\n")
 
     # Audit Tier B
-    import audit as audit_mod
-    audit_mod.replay_tier_b(db.path)
+    from ufosint.llm.audit import replay_tier_b
+    replay_tier_b(db.path)
 
     # LLM extractions
-    import run_enrich
-    run_enrich.apply_extractions(db.path)
+    from ufosint.llm.extractor import apply_extractions
+    apply_extractions(db.path)
 
     # Emotions
-    import emotions as emo_mod
-    emo_mod.replay_emotion_cache(db.path)
+    from ufosint.processors.emotions import replay_emotion_cache
+    replay_emotion_cache(db.path)
 
     print(f"\n  Replay complete.")
 

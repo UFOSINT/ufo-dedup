@@ -6,7 +6,7 @@ SQLite database with synthetic sighting data.
 """
 import pytest
 
-from dedup import (
+from ufosint.processors.dedup import (
     strip_nuforc_prefix,
     strip_mufon_boilerplate,
     token_jaccard,
