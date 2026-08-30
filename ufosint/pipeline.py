@@ -24,14 +24,22 @@ from ufosint.db import Database
 
 # Each step: (name, label, function_name_or_callable)
 # Steps are run in order. Dependencies are implicit in ordering.
+#
+# v0.16.3 — the mufon and reddit import steps were removed. Both sources were
+# purged from the corpus in v0.16, and leaving their importers in the default
+# pipeline meant a rebuild would quietly reinstate them. Their importer
+# classes remain in ufosint.importers and can still be run deliberately via
+# get_importer(); they are simply no longer part of a default rebuild.
+#
+# MUFON coverage is not gone with the mufon.csv import: cases that reached
+# UPDB or UFOCAT from MUFON are retained and labelled with origin MUFON. See
+# DIRECTLY_IMPORTED_ORIGINS in ufosint/importers/base.py.
 STEPS = [
     ("schema",      "Create schema"),
     ("ufocat",      "Import UFOCAT"),
     ("nuforc",      "Import NUFORC"),
-    ("mufon",       "Import MUFON"),
     ("updb",        "Import UPDB"),
     ("geldreich",   "Import UFO-search"),
-    ("reddit",      "Import Reddit r/UFOs"),
     ("fixes",       "Apply data quality fixes"),
     ("geocode1",    "Geocode locations (pass 1)"),
     ("audit",       "Audit: fix geocodes + replay LLM location fixes"),
@@ -147,10 +155,6 @@ class Pipeline:
         from ufosint.importers import get_importer
         get_importer("nuforc").run(self.db)
 
-    def _step_mufon(self):
-        from ufosint.importers import get_importer
-        get_importer("mufon").run(self.db)
-
     def _step_updb(self):
         from ufosint.importers import get_importer
         get_importer("updb").run(self.db)
@@ -158,14 +162,6 @@ class Pipeline:
     def _step_geldreich(self):
         from ufosint.importers import get_importer
         get_importer("geldreich").run(self.db)
-
-    def _step_reddit(self):
-        from ufosint.importers import get_importer
-        imp = get_importer("reddit")
-        if os.path.exists(imp.file_path):
-            imp.run(self.db)
-        else:
-            print(f"  Reddit CSV not found — skipping.")
 
     def _step_fixes(self):
         from ufosint.fixes import apply_data_fixes

@@ -24,6 +24,25 @@ from ufosint.config import Config
 from ufosint.db import Database
 
 
+# Origins we import directly from that origin's own dataset. An aggregator
+# (UPDB) should skip a row only when its origin appears here, because we
+# already hold that origin's richer original.
+#
+# v0.16.3 -- MUFON was removed from this set. The mufon.csv import was
+# retired in v0.16, so UPDB was skipping ~MUFON-origin rows on a rationale
+# that no longer held, and MUFON coverage from UPDB was being lost entirely
+# rather than merely deduplicated. NUFORC stays: it is still imported
+# directly from its own dataset.
+#
+# Keep this in step with ufosint/pipeline.py STEPS. tests/test_origins.py
+# asserts the two agree, because the failure is silent -- dropping an
+# importer without updating this set quietly deletes that source's coverage
+# from every aggregator too.
+DIRECTLY_IMPORTED_ORIGINS = {
+    "NUFORC": ("NUFORC", "National UFO Reporting Center"),
+}
+
+
 class Importer(ABC):
     """Base class for all source importers."""
 
@@ -74,7 +93,14 @@ class Importer(ABC):
         return 5000
 
     def should_skip_row(self, raw):
-        """Return True to skip this row entirely (e.g., UPDB MUFON/NUFORC filter)."""
+        """Return True to skip this row entirely.
+
+        Aggregators (UPDB) use this to drop rows whose origin we already
+        import from that origin's own richer dataset. See
+        DIRECTLY_IMPORTED_ORIGINS — the skip must be derived from what the
+        pipeline actually imports, never hardcoded, or dropping a source
+        from the pipeline silently loses its coverage everywhere.
+        """
         return False
 
     def on_skip(self, raw, reason=None):
@@ -210,6 +236,22 @@ class Importer(ABC):
         for sight_dict, loc_id in zip(sight_batch, loc_ids):
             sight_dict["location_id"] = loc_id
 
+        # Translate the human-readable origin name an importer may have
+        # attached into the source_origin FK. Aggregator rows (UPDB,
+        # GELDREICH) carry the body that originally reported the case, which
+        # is what makes "MUFON via UPDB" distinguishable from the retired
+        # mufon.csv import -- the v0.16 purge keyed on exactly that
+        # distinction (source_db_id, never origin_id).
+        #
+        # Done here rather than in parse_row because it needs a cursor.
+        # Every row in the batch gets the key so the column list below stays
+        # consistent across dicts.
+        if any("origin_name" in d for d in sight_batch):
+            omap = self._origin_id_map(cur)
+            for d in sight_batch:
+                name = d.pop("origin_name", None)
+                d["origin_id"] = omap.get(name.strip().upper()) if name else None
+
         # Determine columns from the first dict
         columns = list(sight_batch[0].keys())
         placeholders = ", ".join("?" * len(columns))
@@ -220,6 +262,13 @@ class Importer(ABC):
             [tuple(d.get(c) for c in columns) for d in sight_batch]
         )
         conn.commit()
+
+    def _origin_id_map(self, cur):
+        """Cached {UPPERCASE origin name: id} from source_origin."""
+        if getattr(self, "_origin_cache", None) is None:
+            cur.execute("SELECT id, name FROM source_origin")
+            self._origin_cache = {n.strip().upper(): i for i, n in cur.fetchall()}
+        return self._origin_cache
 
     def _read_source(self):
         """Read the source file and return a list of dicts."""

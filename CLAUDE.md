@@ -32,24 +32,28 @@ explicit permission — **that split no longer applies.** You may edit both.
 The sibling repo's `CLAUDE.md` still carries the old two-owner wording and
 Windows-era paths (`C:/dev/dg/UFOSINT/`); it needs the same correction.
 
-## ⚠️ The SQLite files are out of sync with production
+## SQLite / production parity
 
-**Check this before running any reload.** In v0.16 the live Postgres was purged
-of the `mufon.csv` import (138,310 sightings) and all r/UFOs records (3,811).
-**Those rows are still present in both SQLite files here** — they still report
-618,316 sightings across six sources; production serves 476,195 across four.
+Both SQLite files were purged to match production on 2026-08-19 and now agree
+with it: **476,195 sightings across four sources** (UFOCAT 197,108 / NUFORC
+159,320 / UPDB 65,016 / UFO-search 54,751). A reload via the sibling repo's
+`migrate_sqlite_to_pg.py` or `reload_from_public_db.py` is safe again.
 
-Consequences you must not walk into:
+Re-runnable via `scripts/purge_mufon_csv_and_reddit.py` (dry run by default).
+Pre-purge backups sit beside the databases as `*.db.pre-v016-purge`; they are
+gitignored and can be deleted once you're confident.
 
-- Running `migrate_sqlite_to_pg.py` or `reload_from_public_db.py` against
-  production **will resurrect MUFON and Reddit** and undo the purge.
-- The published `ufo_public.db` release asset is likewise stale. The site's
-  download card says so explicitly; keep that caveat accurate.
+**Still stale:** the published `ufo_public.db` release asset on GitHub is the
+old 618,316-row build. Attach a rebuilt file to the next tagged release.
 
-Until the same purge is applied here, treat the SQLite files as *older* than
-production, not as the source of truth for row membership. The web app's
-`scripts/purge_mufon_csv_and_reddit.sql` documents exactly what was removed and
-on what predicate (`source_db_id`, never `origin_id`).
+Two shape differences from the Postgres purge, both handled in that script:
+
+- SQLite has a `sighting_analysis` table Postgres lacks, and `ufo_public.db`
+  lacks `duplicate_candidate` and `sentiment_analysis`.
+- **`r/UFOs` sits in the `PUBLIUS` collection here.** The separate `Reddit`
+  collection only ever existed in Postgres, seeded by
+  `add_v013_reddit_columns.sql`. Matching on collection name — as the SQL
+  version does — finds only one of the two targets.
 
 ## Layout
 
@@ -57,15 +61,16 @@ on what predicate (`source_db_id`, never `origin_id`).
 ufosint/
   config.py            Paths + settings (ufosint.toml). Config.db_path() is canonical.
   db.py                SQLite connection manager. Single source of truth for connections.
-  pipeline.py          The 17-step rebuild orchestration.
-  importers/           One module per source: nuforc, ufocat, updb, geldreich, mufon, reddit
+  pipeline.py          The 15-step rebuild orchestration.
+  importers/           nuforc, ufocat, updb, geldreich (+ mufon, reddit: retired,
+                       registered but not in the default pipeline)
   processors/          Enrichment passes: geocoder, dedup, emotions, movement, colors,
                        duration, hoax, nuclear, country
   llm/                 LLM extraction + audit (cached; see data/output/*.csv)
   export/public_db.py  Builds the stripped public export
 scripts/               One-shot operational scripts
 geodata/               GeoNames gazetteers (cities1000 / 5000 / 15000)
-tests/                 pytest; 477 tests, all offline
+tests/                 pytest; 499 tests, all offline
 ```
 
 The root-level `import_*.py` and `analyze.py` files are thin wrappers kept for
@@ -102,6 +107,34 @@ treated as a valid ISO code and `TX`, `FL`, `NY` become "countries". It is only
 safe on the text-fallback path after that is fixed to validate against real
 ISO-3166. Don't derive that validation list from the gazetteer — it has no
 cities in Antarctica and so wrongly rejects `AQ`.
+
+## Aggregator origin retention
+
+UPDB and UFOCAT are **aggregators** — they carry cases other bodies originally
+reported, recorded in UPDB's `name` column and surfaced as
+`sighting.origin_id` / `origin_record_id`.
+
+Skipping an aggregator's row is only correct when we import that body's own
+richer dataset. When we don't, the skip stops being deduplication and becomes
+deletion.
+
+That is what happened to MUFON: `mufon.csv` was retired in v0.16, but UPDB
+kept skipping MUFON-origin rows on the old rationale, so MUFON coverage from
+UPDB fell to zero instead of falling back to the aggregator copy.
+
+**The rule:** an aggregator skips an origin **only if** that origin appears in
+`DIRECTLY_IMPORTED_ORIGINS` (`ufosint/importers/base.py`), which must stay in
+step with `STEPS` in `ufosint/pipeline.py`. `tests/test_origins.py` asserts
+the two agree — the failure mode is silent, so it needs a test rather than
+discipline.
+
+Retained rows are labelled: `parse_row` sets `origin_name`, and
+`Importer._flush_batch` resolves it to the `source_origin` FK. That is what
+keeps "MUFON via UPDB" distinguishable from the retired `mufon.csv` import —
+the distinction the v0.16 purge keyed on (`source_db_id`, never `origin_id`).
+
+`mufon` and `reddit` are no longer default pipeline steps. Their importer
+classes remain available via `get_importer()` for deliberate one-off use.
 
 ## Conventions
 

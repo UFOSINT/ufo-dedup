@@ -47,3 +47,6 @@ nul
 *.png
 *.tmp
 ufosint.egg-info/
+
+# Pre-purge SQLite backups (2.7 GB). Safety copies, never committed.
+*.db.pre-*
