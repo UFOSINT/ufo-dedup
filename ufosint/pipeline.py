@@ -238,9 +238,10 @@ class Pipeline:
             print("  No Gerb bundle — skipping nuclear proximity")
 
     def _step_export(self):
-        import export_public
-        # For test mode, export to a test public DB
-        test_public = self.db_path.replace("unified", "public")
-        export_public.DEFAULT_SOURCE = self.db_path
-        export_public.DEFAULT_TARGET = test_public
-        export_public.main()
+        # v0.16.4 — was `import export_public`, a root-level wrapper deleted in
+        # the "delete 15 legacy wrapper scripts" cleanup. Nothing caught it
+        # because no full rebuild had run since, so the pipeline crashed on its
+        # final step with ModuleNotFoundError.
+        from ufosint.export.public_db import run_export
+        target = self.db_path.replace("unified", "public")
+        run_export(source=self.db_path, target=target)

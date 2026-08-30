@@ -156,6 +156,7 @@ class Importer(ABC):
         print(f"  Reading {self.file_path}...")
         raw_rows = self._read_source()
         rows_read = len(raw_rows)
+        self._next_loc_id = None
         print(f"  Records in file: {len(raw_rows):,}")
 
         # Process rows
@@ -241,17 +242,32 @@ class Importer(ABC):
 
     def _flush_batch(self, conn, cur, loc_batch, sight_batch):
         """Insert a batch of locations + sightings."""
-        # Insert locations
+        # Assign explicit location ids rather than inferring them afterwards.
+        #
+        # This used to insert with id=NULL and then derive the batch's ids from
+        # cur.lastrowid. sqlite3 does NOT update lastrowid for executemany()
+        # (verified on Python 3.12 / SQLite 3.45: it keeps the value from the
+        # previous single execute()), so the derived range was wrong by however
+        # many rows had been inserted -- sighting.location_id ran from -9999
+        # upward and only a quarter of rows joined to their real location.
+        #
+        # Nothing raised. The damage showed up downstream as sightings wearing
+        # other sightings' places, no countries on any joined row, and the
+        # deduplication pass finding zero pairs because it groups on city.
+        if self._next_loc_id is None:
+            cur.execute("SELECT COALESCE(MAX(id), 0) FROM location")
+            self._next_loc_id = cur.fetchone()[0] + 1
+
+        loc_ids = list(range(self._next_loc_id, self._next_loc_id + len(loc_batch)))
+        self._next_loc_id += len(loc_batch)
+        loc_batch = [(lid,) + tuple(row[1:]) for lid, row in zip(loc_ids, loc_batch)]
+
         cur.executemany(
             "INSERT INTO location (id, raw_text, city, county, state, country, "
             "region, latitude, longitude, geoname_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             loc_batch
         )
-
-        # Get the location IDs (last N autoincrement IDs)
-        last_id = cur.lastrowid
-        loc_ids = range(last_id - len(loc_batch) + 1, last_id + 1)
 
         # Build sighting tuples
         for sight_dict, loc_id in zip(sight_batch, loc_ids):

@@ -314,3 +314,88 @@ def test_geldreich_every_record_parses():
         except Exception as e:
             bad.append(type(e).__name__)
     assert not bad, f"{len(bad)} records raised during parse_row: {set(bad)}"
+
+
+# ---------------------------------------------------------------------------
+# location_id assignment — the corruption the first rebuild produced
+# ---------------------------------------------------------------------------
+
+def test_lastrowid_is_not_reliable_after_executemany():
+    """Documents the sqlite3 behaviour this class of bug rests on.
+
+    If a future Python starts setting lastrowid for executemany, this test
+    fails and the note below can be revisited — but the importer must not go
+    back to depending on it either way.
+    """
+    import sqlite3 as _s
+    c = _s.connect(":memory:")
+    c.execute("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)")
+    cur = c.cursor()
+    cur.execute("INSERT INTO t (id, v) VALUES (?, ?)", (None, "seed"))
+    seeded = cur.lastrowid
+    cur.executemany("INSERT INTO t (id, v) VALUES (?, ?)",
+                    [(None, f"r{i}") for i in range(10)])
+    assert cur.lastrowid == seeded, "lastrowid unexpectedly tracked executemany"
+    assert c.execute("SELECT MAX(id) FROM t").fetchone()[0] == 11
+    c.close()
+
+
+def test_importer_assigns_correct_location_ids(tmp_path):
+    """Every sighting must point at its own location, across batch boundaries.
+
+    The v0.16.4 rebuild produced sighting.location_id values from -9999 up,
+    and only 149,778 of 573,210 rows joined to a location at all.
+    """
+    import sqlite3 as _s
+    from ufosint.importers.base import Importer
+    from ufosint.db import Database
+
+    db_path = tmp_path / "t.db"
+    conn = _s.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE location (id INTEGER PRIMARY KEY AUTOINCREMENT, raw_text TEXT,
+            city TEXT, county TEXT, state TEXT, country TEXT, region TEXT,
+            latitude REAL, longitude REAL, geoname_id INTEGER);
+        CREATE TABLE source_database (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+        CREATE TABLE source_origin (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+        CREATE TABLE sighting (id INTEGER PRIMARY KEY AUTOINCREMENT, source_db_id INTEGER,
+            location_id INTEGER, source_record_id TEXT);
+        INSERT INTO source_database (name) VALUES ('T');
+    """)
+    conn.commit(); conn.close()
+
+    class Tiny(Importer):
+        source_name = "T"
+        batch_size = 10          # force several batches
+        @property
+        def file_path(self): return str(tmp_path / "src.json")
+        @property
+        def file_format(self): return "json"
+        def parse_row(self, raw):
+            return ({"raw_text": raw["c"], "city": raw["c"]},
+                    {"source_record_id": raw["c"]})
+
+    import json as _json
+    (tmp_path / "src.json").write_text(
+        _json.dumps([{"c": f"city{i}"} for i in range(35)]), encoding="utf-8")
+
+    Tiny().run(Database(str(db_path)))
+
+    conn = _s.connect(db_path)
+    n = conn.execute("SELECT COUNT(*) FROM sighting").fetchone()[0]
+    joined = conn.execute(
+        "SELECT COUNT(*) FROM sighting s JOIN location l ON l.id = s.location_id"
+    ).fetchone()[0]
+    assert n == 35
+    assert joined == 35, f"only {joined}/{n} sightings joined to their location"
+
+    lo = conn.execute("SELECT MIN(location_id) FROM sighting").fetchone()[0]
+    assert lo >= 1, f"negative location_id leaked in: {lo}"
+
+    # each sighting must point at ITS OWN city, not another row's
+    bad = conn.execute("""
+        SELECT COUNT(*) FROM sighting s JOIN location l ON l.id = s.location_id
+        WHERE l.city != s.source_record_id
+    """).fetchone()[0]
+    assert bad == 0, f"{bad} sightings are wearing another row's location"
+    conn.close()
