@@ -97,11 +97,21 @@ class UpdbImporter(Importer):
         return any(skip.lower() in name.lower() for skip in SKIP_NAMES)
 
     def parse_row(self, raw):
-        raw_loc = (raw.get("location", "") or "").strip()
-        parts = [p.strip() for p in raw_loc.replace("\\,", ",").split(",")]
-        city = parts[0] if len(parts) > 0 else None
-        state = parts[1] if len(parts) > 1 else None
-        country = parts[2] if len(parts) > 2 else None
+        # v0.16.4 — this used to split the `location` column into city/state/
+        # country. That column is a numeric GeoNames reference ("5193892"),
+        # not a place name, so every UPDB row was imported with its city set
+        # to a number: 0 of 159,778 geocoded, against 39.5% in the April
+        # corpus. The real place lives in the separate `city` and `country`
+        # columns, and the CSV has no state column at all.
+        #
+        # `case_number`, `short_desc` and `long_desc` were read here too and
+        # exist nowhere in the file, so source_record_id and description came
+        # out NULL for every row. Actual columns are:
+        #   id, source, source_id, name, date, location, city, country, description
+        city = (raw.get("city", "") or "").strip() or None
+        country = (raw.get("country", "") or "").strip() or None
+        state = None
+        raw_loc = ", ".join(p for p in (city, country) if p) or None
 
         location = {
             "raw_text": raw_loc or None,
@@ -112,22 +122,21 @@ class UpdbImporter(Importer):
 
         date_event, date_raw = parse_updb_date(raw.get("date", ""))
 
-        short = (raw.get("short_desc", "") or "").strip()
-        long = (raw.get("long_desc", "") or "").strip()
+        desc = (raw.get("description", "") or "").strip()
 
         origin_raw = (raw.get("name", "") or "").strip() or None
 
         sighting = {
-            "source_record_id": (raw.get("case_number", "") or "").strip() or None,
-            "origin_record_id": origin_raw,
+            "source_record_id": (raw.get("id", "") or "").strip() or None,
+            "origin_record_id": (raw.get("source_id", "") or "").strip() or None,
             # Resolved to a source_origin FK by Importer._flush_batch. Always
             # present, even when None, so every dict in a batch shares a key
             # set and the generated INSERT column list stays stable.
             "origin_name": canonical_origin(origin_raw),
             "date_event": date_event,
             "date_event_raw": date_raw,
-            "summary": short or None,
-            "description": long or short or None,
+            "summary": None,
+            "description": desc or None,
             "raw_json": json.dumps(
                 {k: v for k, v in raw.items() if v and str(v).strip()},
                 ensure_ascii=False,

@@ -502,3 +502,72 @@ def test_location_reuse_distinguishes_explicit_coordinates(tmp_path):
     conn = _s.connect(db_path)
     assert conn.execute("SELECT COUNT(*) FROM location").fetchone()[0] == 2
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Source column mappings — fields silently read from columns that don't exist
+# ---------------------------------------------------------------------------
+
+def test_updb_reads_real_csv_columns():
+    """UPDB's columns are id, source, source_id, name, date, location, city,
+    country, description.
+
+    The importer used to split `location` into city/state/country, but that
+    column is a numeric GeoNames reference ("5193892"). It also read
+    case_number, short_desc and long_desc, none of which exist. Result: every
+    UPDB row imported with a number for a city and NULL description, and 0 of
+    159,778 geocoded against 39.5% in the April corpus.
+    """
+    from ufosint.importers.updb import UpdbImporter
+    row = {
+        "id": "5182466", "source": "3", "source_id": "2csohq", "name": "NICAP",
+        "date": "1993-05-20 00:00:00", "location": "5193892",
+        "city": "OTTAWA", "country": "CA",
+        "description": "Airliner crew saw a dark blue triangular object.",
+    }
+    loc, s = UpdbImporter().parse_row(row)
+
+    assert loc["city"] == "OTTAWA"
+    assert loc["country"] == "CA"
+    assert loc["raw_text"] == "OTTAWA, CA"
+    assert "5193892" not in str(loc), "the numeric GeoNames id must not become a place"
+
+    assert s["source_record_id"] == "5182466"
+    assert s["origin_record_id"] == "2csohq"
+    assert s["origin_name"] == "NICAP"
+    assert s["description"].startswith("Airliner crew")
+
+
+def test_updb_row_without_place_yields_no_location_text():
+    from ufosint.importers.updb import UpdbImporter
+    loc, _s = UpdbImporter().parse_row(
+        {"id": "1", "source_id": "x", "name": "NICAP", "date": "1900-01-01",
+         "location": "5176696", "city": "", "country": "", "description": "d"}
+    )
+    assert loc["city"] is None and loc["country"] is None
+    assert loc["raw_text"] is None
+
+
+def test_ufocat_reads_source_coordinates():
+    """The columns are LATITUDE / LONGITUDE, not LAT / LON.
+
+    raw.get("LAT") always returned "", so every UFOCAT coordinate was
+    discarded and the source fell back to name-only geocoding — 44.7% mapped
+    against 89.3% in April. Values carry leading whitespace.
+    """
+    from ufosint.importers.ufocat import UfocatImporter
+    loc, _s = UfocatImporter().parse_row({
+        "LOCATION": "CINTEGABELLE W", "LATITUDE": "  43.33", "LONGITUDE": "  -1.48",
+        "DATE": "19730101", "SOURCE": "X",
+    })
+    assert loc["latitude"] == 43.33
+    assert loc["longitude"] == -1.48
+
+
+def test_ufocat_blank_coordinates_stay_none():
+    from ufosint.importers.ufocat import UfocatImporter
+    loc, _s = UfocatImporter().parse_row({
+        "LOCATION": "LAS PISCINAS", "LATITUDE": "", "LONGITUDE": "",
+        "DATE": "19730101", "SOURCE": "X",
+    })
+    assert loc["latitude"] is None and loc["longitude"] is None

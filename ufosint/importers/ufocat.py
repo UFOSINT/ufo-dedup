@@ -98,11 +98,18 @@ class UfocatImporter(Importer):
         state = (raw.get("STATE", "") or "").strip() or None
         country = (raw.get("COUNTRY", "") or "").strip() or None
 
+        # v0.16.4 — the columns are LATITUDE / LONGITUDE, not LAT / LON.
+        # raw.get("LAT") always returned "", so every UFOCAT coordinate was
+        # thrown away and the rows fell back to name-only geocoding: 44.7%
+        # of UFOCAT sightings mapped against 89.3% in the April corpus.
+        # UFOCAT ships its own coordinates and they are the best we have for
+        # this source, so losing them is expensive.
+        # Values carry leading whitespace ("  43.33"); float() copes.
         lat = None
         lon = None
         try:
-            lat_str = raw.get("LAT", "")
-            lon_str = raw.get("LON", "")
+            lat_str = (raw.get("LATITUDE") or "").strip()
+            lon_str = (raw.get("LONGITUDE") or "").strip()
             if lat_str and lon_str:
                 lat = float(lat_str)
                 lon = float(lon_str)
