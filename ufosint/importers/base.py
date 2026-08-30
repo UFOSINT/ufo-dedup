@@ -89,6 +89,16 @@ class Importer(ABC):
         return "utf-8"
 
     @property
+    def json_root(self):
+        """Key holding the record list, when the JSON is a dict wrapper.
+
+        None means the document is already a list. Getting this wrong used to
+        fail silently: iterating a dict yields its keys, so the importer saw
+        one "row", skipped it, and reported success having imported nothing.
+        """
+        return None
+
+    @property
     def batch_size(self):
         return 5000
 
@@ -145,6 +155,7 @@ class Importer(ABC):
         # Read source file
         print(f"  Reading {self.file_path}...")
         raw_rows = self._read_source()
+        rows_read = len(raw_rows)
         print(f"  Records in file: {len(raw_rows):,}")
 
         # Process rows
@@ -215,6 +226,16 @@ class Importer(ABC):
         }
 
         print(f"\n  {self.source_name}: {imported:,} imported, {skipped:,} skipped ({elapsed:.1f}s)")
+
+        # A source file that exists but yields nothing is a structural problem
+        # (wrong shape, wrong key, changed schema), not a legitimate outcome.
+        # It used to pass silently: the v0.16.4 rebuild lost all 54,751
+        # UFO-search rows to a "0 imported, 1 skipped" that looked like success.
+        if imported == 0 and rows_read > 0:
+            stats["error"] = "imported_nothing"
+            print(f"  !! {self.source_name}: read {rows_read:,} record(s) but "
+                  f"imported none — the file shape is probably wrong")
+
         self.on_complete(stats)
         return stats
 
@@ -274,7 +295,23 @@ class Importer(ABC):
         """Read the source file and return a list of dicts."""
         if self.file_format == "json":
             with open(self.file_path, "r", encoding=self.csv_encoding) as f:
-                return json.load(f)
+                data = json.load(f)
+            if self.json_root is not None:
+                if not isinstance(data, dict) or self.json_root not in data:
+                    raise ValueError(
+                        f"{self.source_name}: expected a dict with key "
+                        f"{self.json_root!r} in {self.file_path}, got "
+                        f"{type(data).__name__} with keys "
+                        f"{list(data)[:5] if isinstance(data, dict) else 'n/a'}"
+                    )
+                data = data[self.json_root]
+            if not isinstance(data, list):
+                raise ValueError(
+                    f"{self.source_name}: {self.file_path} did not yield a list "
+                    f"of records (got {type(data).__name__}). Set json_root if "
+                    f"the records are nested under a key."
+                )
+            return data
         else:
             with open(self.file_path, "r", encoding=self.csv_encoding, errors="replace") as f:
                 reader = csv.DictReader(f)

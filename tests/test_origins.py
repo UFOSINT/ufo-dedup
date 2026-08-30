@@ -204,3 +204,113 @@ def test_nuforc_names_preferred_file_when_none_present(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Config, "raw_data_dir", staticmethod(lambda: str(tmp_path)))
     assert NuforcImporter().file_path.endswith("nuforcpy.csv")
+
+
+# ---------------------------------------------------------------------------
+# JSON source shape — the UFO-search regression
+# ---------------------------------------------------------------------------
+
+def test_geldreich_declares_its_json_root():
+    """majestic.json nests records under a key, not a bare list.
+
+    Without json_root the base reader returned the dict, iteration yielded its
+    single key, and the import reported "0 imported, 1 skipped" while exiting
+    successfully — silently dropping all 54,751 UFO-search rows from a rebuild.
+    """
+    from ufosint.importers.geldreich import GeldreichImporter
+    assert GeldreichImporter().json_root == "Majestic Timeline"
+
+
+def test_json_root_unwraps(tmp_path, monkeypatch):
+    import json as _json
+    from ufosint.importers.base import Importer
+
+    class Wrapped(Importer):
+        source_name = "T"
+        @property
+        def file_path(self): return str(tmp_path / "d.json")
+        @property
+        def file_format(self): return "json"
+        @property
+        def json_root(self): return "records"
+        def parse_row(self, raw): return {}, {}
+
+    (tmp_path / "d.json").write_text(_json.dumps({"records": [{"a": 1}, {"a": 2}]}), encoding="utf-8")
+    assert Wrapped()._read_source() == [{"a": 1}, {"a": 2}]
+
+
+def test_wrong_json_root_raises_instead_of_importing_nothing(tmp_path):
+    import json as _json
+    import pytest as _pytest
+    from ufosint.importers.base import Importer
+
+    class Wrapped(Importer):
+        source_name = "T"
+        @property
+        def file_path(self): return str(tmp_path / "d.json")
+        @property
+        def file_format(self): return "json"
+        @property
+        def json_root(self): return "records"
+        def parse_row(self, raw): return {}, {}
+
+    (tmp_path / "d.json").write_text(_json.dumps({"other": [{"a": 1}]}), encoding="utf-8")
+    with _pytest.raises(ValueError, match="expected a dict with key"):
+        Wrapped()._read_source()
+
+
+def test_dict_json_without_root_raises(tmp_path):
+    import json as _json
+    import pytest as _pytest
+    from ufosint.importers.base import Importer
+
+    class Bare(Importer):
+        source_name = "T"
+        @property
+        def file_path(self): return str(tmp_path / "d.json")
+        @property
+        def file_format(self): return "json"
+        def parse_row(self, raw): return {}, {}
+
+    (tmp_path / "d.json").write_text(_json.dumps({"a": [1]}), encoding="utf-8")
+    with _pytest.raises(ValueError, match="did not yield a list"):
+        Bare()._read_source()
+
+
+def test_geldreich_handles_list_valued_location():
+    """majestic.json gives `location` as a list for multi-place cases.
+
+    3,567 of 54,751 records. This raised AttributeError on .strip(), which the
+    base importer's bare `except Exception` swallowed as a skip — so a rebuild
+    silently dropped them.
+    """
+    from ufosint.importers.geldreich import parse_geldreich_location
+
+    city, state, country, raw = parse_geldreich_location(
+        ["Lyon, France", "Magonia", "Mahon, Menorca"]
+    )
+    assert city == "France"
+    assert raw == "Lyon, France; Magonia; Mahon, Menorca", "full list must be preserved"
+
+    assert parse_geldreich_location([]) == (None, None, None, None)
+    assert parse_geldreich_location(["", "  "]) == (None, None, None, None)
+    # strings still behave
+    assert parse_geldreich_location("Phoenix, AZ") == ("Phoenix", "AZ", "US", "Phoenix, AZ")
+
+
+def test_geldreich_every_record_parses():
+    """No record may fall into the base importer's silent exception skip."""
+    import os
+    from ufosint.importers.geldreich import GeldreichImporter
+    imp = GeldreichImporter()
+    if not os.path.exists(imp.file_path):
+        import pytest as _p
+        _p.skip("majestic.json not available in this checkout")
+    rows = imp._read_source()
+    bad = []
+    for r in rows:
+        try:
+            loc, s = imp.parse_row(r)
+        except Exception as e:
+            bad.append(type(e).__name__)
+    assert not bad, f"{len(bad)} records raised during parse_row: {set(bad)}"
