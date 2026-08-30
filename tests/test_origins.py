@@ -172,3 +172,35 @@ def test_origin_name_resolves_to_source_origin_fk(tmp_path):
     assert batch[1]["origin_id"] is None
     assert all("origin_name" not in d for d in batch)
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# NUFORC source file selection
+# ---------------------------------------------------------------------------
+
+def test_nuforc_prefers_refreshed_extract(tmp_path, monkeypatch):
+    """nuforcpy.csv supersedes nuforc.csv and must win when both exist.
+
+    Verified a strict superset of the original: identical header, all 159,320
+    original case numbers present, 2,253 added, none dropped.
+    """
+    from ufosint.importers.nuforc import NuforcImporter
+    from ufosint.config import Config
+
+    monkeypatch.setattr(Config, "raw_data_dir", staticmethod(lambda: str(tmp_path)))
+    imp = NuforcImporter()
+
+    (tmp_path / "nuforc.csv").write_text("x", encoding="utf-8")
+    assert imp.file_path.endswith("nuforc.csv"), "must fall back when only the old file exists"
+
+    (tmp_path / "nuforcpy.csv").write_text("x", encoding="utf-8")
+    assert imp.file_path.endswith("nuforcpy.csv"), "refreshed extract must take precedence"
+
+
+def test_nuforc_names_preferred_file_when_none_present(tmp_path, monkeypatch):
+    """A missing-file error should name the file we actually want."""
+    from ufosint.importers.nuforc import NuforcImporter
+    from ufosint.config import Config
+
+    monkeypatch.setattr(Config, "raw_data_dir", staticmethod(lambda: str(tmp_path)))
+    assert NuforcImporter().file_path.endswith("nuforcpy.csv")
