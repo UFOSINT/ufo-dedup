@@ -136,15 +136,21 @@ class GeldreichImporter(Importer):
             raw.get("date", ""), raw.get("time")
         )
 
-        # Sources array → source_ref
-        sources = raw.get("sources", [])
-        source_ref = ", ".join(sources) if isinstance(sources, list) else str(sources or "")
+        # v0.16.4 — the keys are `source` (the originating compilation, e.g.
+        # "Maj2", "EberhartUFOI") and `ref` (citation list). There is no
+        # `sources` key, so source_ref was empty for every row.
+        sources = raw.get("ref") or raw.get("source") or []
+        source_ref = ", ".join(str(x) for x in sources) if isinstance(sources, list) else str(sources or "")
 
         sighting = {
-            "source_record_id": raw.get("id") or raw.get("record_id"),
+            # v0.16.4 — the key is `source_id` ("Maj2_1"); neither `id` nor
+            # `record_id` exists, so this was NULL throughout.
+            "source_record_id": (raw.get("source_id") or "").strip() or None,
             "date_event": date_event,
             "date_event_raw": date_raw,
-            "description": (raw.get("description", "") or "").strip() or None,
+            # v0.16.4 — the key is `desc`; `description` does not exist, so every
+            # UFO-search narrative was NULL (April had all 54,751).
+            "description": (raw.get("desc", "") or "").strip() or None,
             "source_ref": source_ref or None,
             "raw_json": json.dumps(raw, ensure_ascii=False),
         }

@@ -571,3 +571,58 @@ def test_ufocat_blank_coordinates_stay_none():
         "DATE": "19730101", "SOURCE": "X",
     })
     assert loc["latitude"] is None and loc["longitude"] is None
+
+
+# ---------------------------------------------------------------------------
+# The sweep that would have caught all of these at once
+# ---------------------------------------------------------------------------
+
+def test_importers_only_read_columns_their_source_actually_has():
+    """Every raw.get("X") must name a real column in that importer's file.
+
+    Six separate fields were being read from columns that do not exist, and
+    every one failed silently — raw.get() returns "" and the value lands as
+    NULL. Between them they cost the April corpus its UPDB descriptions and
+    case ids, all UFOCAT narratives and coordinates, and every UFO-search
+    narrative and record id.
+
+    Skipped when the raw sources aren't in the checkout.
+    """
+    import csv as _csv, os, re, sys
+    import pytest as _p
+    from ufosint.importers import get_importer
+
+    _csv.field_size_limit(sys.maxsize)
+
+    # NUFORC's header has leading spaces on three columns; the importer reads
+    # both spellings on purpose, so the bare form is expected to be "absent".
+    KNOWN_OK = {"NUFORC": {"Angle of Elevation", "Direction from Viewer", "Viewed from"}}
+
+    checked = 0
+    problems = []
+    for name in ("ufocat", "nuforc", "updb", "geldreich"):
+        imp = get_importer(name)
+        if not os.path.exists(imp.file_path):
+            continue
+        checked += 1
+        src = open(f"ufosint/importers/{name}.py", encoding="utf-8").read()
+        # strip comments so documentation of past bugs doesn't count as a read
+        code = "\n".join(l.split("#")[0] for l in src.splitlines())
+        reads = set(re.findall(r'raw\.get\(\s*"([^"]+)"', code))
+
+        if imp.file_format == "json":
+            cols = set()
+            for row in imp._read_source()[:2000]:
+                cols |= set(row.keys())
+        else:
+            with open(imp.file_path, newline="", encoding=imp.csv_encoding,
+                      errors="replace") as f:
+                cols = set(next(_csv.reader(f)))
+
+        absent = sorted(reads - cols - KNOWN_OK.get(imp.source_name, set()))
+        if absent:
+            problems.append(f"{imp.source_name} reads absent columns {absent}")
+
+    if not checked:
+        _p.skip("raw sources not available in this checkout")
+    assert not problems, "; ".join(problems)
