@@ -157,6 +157,7 @@ class Importer(ABC):
         raw_rows = self._read_source()
         rows_read = len(raw_rows)
         self._next_loc_id = None
+        self._loc_cache = None
         print(f"  Records in file: {len(raw_rows):,}")
 
         # Process rows
@@ -258,16 +259,51 @@ class Importer(ABC):
             cur.execute("SELECT COALESCE(MAX(id), 0) FROM location")
             self._next_loc_id = cur.fetchone()[0] + 1
 
-        loc_ids = list(range(self._next_loc_id, self._next_loc_id + len(loc_batch)))
-        self._next_loc_id += len(loc_batch)
-        loc_batch = [(lid,) + tuple(row[1:]) for lid, row in zip(loc_ids, loc_batch)]
+        # Reuse an existing location row when one already describes this place.
+        #
+        # Locations are shared, not per-sighting: "Phoenix, AZ, US" is one row
+        # that many sightings point at. Restored in v0.16.4 after the Phase 3
+        # importer refactor dropped it. Without reuse the April corpus of
+        # 476,195 sightings over 167,830 places became 573,210 sightings over
+        # 573,210 places, and because geocoding resolves places rather than
+        # sightings, map coverage fell from 328,714 to 212,423 — a rebuild that
+        # ADDED 97,015 sightings and LOST a third of the map.
+        #
+        # The key is every column the importer sets, lat/lng included: two rows
+        # naming the same place but carrying different explicit coordinates are
+        # genuinely different places and must stay apart. On the April corpus
+        # this key yields 167,763 rows against the 167,830 actually there, so
+        # it reproduces the historical behaviour rather than inventing one.
+        if self._loc_cache is None:
+            self._loc_cache = {}
+            cur.execute(
+                "SELECT id, raw_text, city, county, state, country, region, "
+                "latitude, longitude FROM location"
+            )
+            for row in cur.fetchall():
+                self._loc_cache[tuple(row[1:])] = row[0]
 
-        cur.executemany(
-            "INSERT INTO location (id, raw_text, city, county, state, country, "
-            "region, latitude, longitude, geoname_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            loc_batch
-        )
+        loc_ids = []
+        to_insert = []
+        for row in loc_batch:
+            key = tuple(row[1:9])          # raw_text .. longitude
+            existing = self._loc_cache.get(key)
+            if existing is not None:
+                loc_ids.append(existing)
+                continue
+            new_id = self._next_loc_id
+            self._next_loc_id += 1
+            self._loc_cache[key] = new_id
+            loc_ids.append(new_id)
+            to_insert.append((new_id,) + tuple(row[1:]))
+
+        if to_insert:
+            cur.executemany(
+                "INSERT INTO location (id, raw_text, city, county, state, country, "
+                "region, latitude, longitude, geoname_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                to_insert
+            )
 
         # Build sighting tuples
         for sight_dict, loc_id in zip(sight_batch, loc_ids):

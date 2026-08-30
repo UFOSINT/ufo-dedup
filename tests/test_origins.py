@@ -399,3 +399,106 @@ def test_importer_assigns_correct_location_ids(tmp_path):
     """).fetchone()[0]
     assert bad == 0, f"{bad} sightings are wearing another row's location"
     conn.close()
+
+
+def test_locations_are_shared_not_per_sighting(tmp_path):
+    """Two sightings at the same place must point at one location row.
+
+    The Phase 3 refactor dropped this. Because geocoding resolves places
+    rather than sightings, one row per sighting cut map coverage by a third
+    on a rebuild that otherwise added 97,015 sightings.
+    """
+    import json as _json
+    import sqlite3 as _s
+    from ufosint.importers.base import Importer
+    from ufosint.db import Database
+
+    db_path = tmp_path / "t.db"
+    conn = _s.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE location (id INTEGER PRIMARY KEY AUTOINCREMENT, raw_text TEXT,
+            city TEXT, county TEXT, state TEXT, country TEXT, region TEXT,
+            latitude REAL, longitude REAL, geoname_id INTEGER);
+        CREATE TABLE source_database (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+        CREATE TABLE source_origin (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+        CREATE TABLE sighting (id INTEGER PRIMARY KEY AUTOINCREMENT, source_db_id INTEGER,
+            location_id INTEGER, source_record_id TEXT);
+        INSERT INTO source_database (name) VALUES ('T');
+    """)
+    conn.commit(); conn.close()
+
+    class Tiny(Importer):
+        source_name = "T"
+        batch_size = 4                     # force reuse across batch boundaries
+        @property
+        def file_path(self): return str(tmp_path / "src.json")
+        @property
+        def file_format(self): return "json"
+        def parse_row(self, raw):
+            return ({"raw_text": raw["c"], "city": raw["c"], "state": "AZ"},
+                    {"source_record_id": raw["id"]})
+
+    # 12 sightings across 3 distinct places
+    recs = [{"id": str(i), "c": ["Phoenix", "Tucson", "Mesa"][i % 3]} for i in range(12)]
+    (tmp_path / "src.json").write_text(_json.dumps(recs), encoding="utf-8")
+
+    Tiny().run(Database(str(db_path)))
+
+    conn = _s.connect(db_path)
+    sightings = conn.execute("SELECT COUNT(*) FROM sighting").fetchone()[0]
+    locations = conn.execute("SELECT COUNT(*) FROM location").fetchone()[0]
+    assert sightings == 12
+    assert locations == 3, f"expected 3 shared locations, got {locations}"
+
+    # and every sighting still points at the RIGHT one
+    bad = conn.execute("""
+        SELECT COUNT(*) FROM sighting s JOIN location l ON l.id = s.location_id
+        WHERE l.city != (SELECT CASE CAST(s.source_record_id AS INTEGER) % 3
+                              WHEN 0 THEN 'Phoenix' WHEN 1 THEN 'Tucson' ELSE 'Mesa' END)
+    """).fetchone()[0]
+    assert bad == 0, f"{bad} sightings point at the wrong shared location"
+    conn.close()
+
+
+def test_location_reuse_distinguishes_explicit_coordinates(tmp_path):
+    """Same name, different explicit coords = different places, kept apart."""
+    import json as _json
+    import sqlite3 as _s
+    from ufosint.importers.base import Importer
+    from ufosint.db import Database
+
+    db_path = tmp_path / "t.db"
+    conn = _s.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE location (id INTEGER PRIMARY KEY AUTOINCREMENT, raw_text TEXT,
+            city TEXT, county TEXT, state TEXT, country TEXT, region TEXT,
+            latitude REAL, longitude REAL, geoname_id INTEGER);
+        CREATE TABLE source_database (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+        CREATE TABLE source_origin (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+        CREATE TABLE sighting (id INTEGER PRIMARY KEY AUTOINCREMENT, source_db_id INTEGER,
+            location_id INTEGER, source_record_id TEXT);
+        INSERT INTO source_database (name) VALUES ('T');
+    """)
+    conn.commit(); conn.close()
+
+    class Tiny(Importer):
+        source_name = "T"
+        @property
+        def file_path(self): return str(tmp_path / "src.json")
+        @property
+        def file_format(self): return "json"
+        def parse_row(self, raw):
+            return ({"raw_text": "Springfield", "city": "Springfield",
+                     "latitude": raw["lat"], "longitude": raw["lng"]},
+                    {"source_record_id": raw["id"]})
+
+    (tmp_path / "src.json").write_text(_json.dumps([
+        {"id": "1", "lat": 39.8, "lng": -89.6},
+        {"id": "2", "lat": 39.8, "lng": -89.6},   # identical -> shared
+        {"id": "3", "lat": 42.1, "lng": -72.6},   # different -> separate
+    ]), encoding="utf-8")
+
+    Tiny().run(Database(str(db_path)))
+    conn = _s.connect(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM location").fetchone()[0] == 2
+    conn.close()
