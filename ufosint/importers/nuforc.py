@@ -66,9 +66,26 @@ def parse_nuforc_location(loc_str):
 class NuforcImporter(Importer):
     source_name = "NUFORC"
 
+    # v0.16.4 — nuforcpy.csv is the refreshed NUFORC extract and supersedes
+    # nuforc.csv. Verified a strict superset: identical header, all 159,320
+    # original case numbers still present, 2,253 added, none dropped. Dates
+    # use the same ' YYYY-MM-DD HH:MM Local' form, so parse_nuforc_date needs
+    # no change.
+    #
+    # Falls back to nuforc.csv so a checkout without the refreshed extract
+    # still imports rather than failing.
+    FILE_CANDIDATES = ("nuforcpy.csv", "nuforc.csv")
+
     @property
     def file_path(self):
-        return os.path.join(Config.raw_data_dir(), "nuforc.csv")
+        raw_dir = Config.raw_data_dir()
+        for name in self.FILE_CANDIDATES:
+            candidate = os.path.join(raw_dir, name)
+            if os.path.exists(candidate):
+                return candidate
+        # Nothing present — return the preferred name so the caller's
+        # "file not found" error names the file we actually want.
+        return os.path.join(raw_dir, self.FILE_CANDIDATES[0])
 
     def parse_row(self, raw):
         # Location

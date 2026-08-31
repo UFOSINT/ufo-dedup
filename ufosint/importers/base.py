@@ -24,6 +24,25 @@ from ufosint.config import Config
 from ufosint.db import Database
 
 
+# Origins we import directly from that origin's own dataset. An aggregator
+# (UPDB) should skip a row only when its origin appears here, because we
+# already hold that origin's richer original.
+#
+# v0.16.3 -- MUFON was removed from this set. The mufon.csv import was
+# retired in v0.16, so UPDB was skipping ~MUFON-origin rows on a rationale
+# that no longer held, and MUFON coverage from UPDB was being lost entirely
+# rather than merely deduplicated. NUFORC stays: it is still imported
+# directly from its own dataset.
+#
+# Keep this in step with ufosint/pipeline.py STEPS. tests/test_origins.py
+# asserts the two agree, because the failure is silent -- dropping an
+# importer without updating this set quietly deletes that source's coverage
+# from every aggregator too.
+DIRECTLY_IMPORTED_ORIGINS = {
+    "NUFORC": ("NUFORC", "National UFO Reporting Center"),
+}
+
+
 class Importer(ABC):
     """Base class for all source importers."""
 
@@ -70,11 +89,28 @@ class Importer(ABC):
         return "utf-8"
 
     @property
+    def json_root(self):
+        """Key holding the record list, when the JSON is a dict wrapper.
+
+        None means the document is already a list. Getting this wrong used to
+        fail silently: iterating a dict yields its keys, so the importer saw
+        one "row", skipped it, and reported success having imported nothing.
+        """
+        return None
+
+    @property
     def batch_size(self):
         return 5000
 
     def should_skip_row(self, raw):
-        """Return True to skip this row entirely (e.g., UPDB MUFON/NUFORC filter)."""
+        """Return True to skip this row entirely.
+
+        Aggregators (UPDB) use this to drop rows whose origin we already
+        import from that origin's own richer dataset. See
+        DIRECTLY_IMPORTED_ORIGINS — the skip must be derived from what the
+        pipeline actually imports, never hardcoded, or dropping a source
+        from the pipeline silently loses its coverage everywhere.
+        """
         return False
 
     def on_skip(self, raw, reason=None):
@@ -119,6 +155,9 @@ class Importer(ABC):
         # Read source file
         print(f"  Reading {self.file_path}...")
         raw_rows = self._read_source()
+        rows_read = len(raw_rows)
+        self._next_loc_id = None
+        self._loc_cache = None
         print(f"  Records in file: {len(raw_rows):,}")
 
         # Process rows
@@ -189,26 +228,102 @@ class Importer(ABC):
         }
 
         print(f"\n  {self.source_name}: {imported:,} imported, {skipped:,} skipped ({elapsed:.1f}s)")
+
+        # A source file that exists but yields nothing is a structural problem
+        # (wrong shape, wrong key, changed schema), not a legitimate outcome.
+        # It used to pass silently: the v0.16.4 rebuild lost all 54,751
+        # UFO-search rows to a "0 imported, 1 skipped" that looked like success.
+        if imported == 0 and rows_read > 0:
+            stats["error"] = "imported_nothing"
+            print(f"  !! {self.source_name}: read {rows_read:,} record(s) but "
+                  f"imported none — the file shape is probably wrong")
+
         self.on_complete(stats)
         return stats
 
     def _flush_batch(self, conn, cur, loc_batch, sight_batch):
         """Insert a batch of locations + sightings."""
-        # Insert locations
-        cur.executemany(
-            "INSERT INTO location (id, raw_text, city, county, state, country, "
-            "region, latitude, longitude, geoname_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            loc_batch
-        )
+        # Assign explicit location ids rather than inferring them afterwards.
+        #
+        # This used to insert with id=NULL and then derive the batch's ids from
+        # cur.lastrowid. sqlite3 does NOT update lastrowid for executemany()
+        # (verified on Python 3.12 / SQLite 3.45: it keeps the value from the
+        # previous single execute()), so the derived range was wrong by however
+        # many rows had been inserted -- sighting.location_id ran from -9999
+        # upward and only a quarter of rows joined to their real location.
+        #
+        # Nothing raised. The damage showed up downstream as sightings wearing
+        # other sightings' places, no countries on any joined row, and the
+        # deduplication pass finding zero pairs because it groups on city.
+        if self._next_loc_id is None:
+            cur.execute("SELECT COALESCE(MAX(id), 0) FROM location")
+            self._next_loc_id = cur.fetchone()[0] + 1
 
-        # Get the location IDs (last N autoincrement IDs)
-        last_id = cur.lastrowid
-        loc_ids = range(last_id - len(loc_batch) + 1, last_id + 1)
+        # Reuse an existing location row when one already describes this place.
+        #
+        # Locations are shared, not per-sighting: "Phoenix, AZ, US" is one row
+        # that many sightings point at. Restored in v0.16.4 after the Phase 3
+        # importer refactor dropped it. Without reuse the April corpus of
+        # 476,195 sightings over 167,830 places became 573,210 sightings over
+        # 573,210 places, and because geocoding resolves places rather than
+        # sightings, map coverage fell from 328,714 to 212,423 — a rebuild that
+        # ADDED 97,015 sightings and LOST a third of the map.
+        #
+        # The key is every column the importer sets, lat/lng included: two rows
+        # naming the same place but carrying different explicit coordinates are
+        # genuinely different places and must stay apart. On the April corpus
+        # this key yields 167,763 rows against the 167,830 actually there, so
+        # it reproduces the historical behaviour rather than inventing one.
+        if self._loc_cache is None:
+            self._loc_cache = {}
+            cur.execute(
+                "SELECT id, raw_text, city, county, state, country, region, "
+                "latitude, longitude FROM location"
+            )
+            for row in cur.fetchall():
+                self._loc_cache[tuple(row[1:])] = row[0]
+
+        loc_ids = []
+        to_insert = []
+        for row in loc_batch:
+            key = tuple(row[1:9])          # raw_text .. longitude
+            existing = self._loc_cache.get(key)
+            if existing is not None:
+                loc_ids.append(existing)
+                continue
+            new_id = self._next_loc_id
+            self._next_loc_id += 1
+            self._loc_cache[key] = new_id
+            loc_ids.append(new_id)
+            to_insert.append((new_id,) + tuple(row[1:]))
+
+        if to_insert:
+            cur.executemany(
+                "INSERT INTO location (id, raw_text, city, county, state, country, "
+                "region, latitude, longitude, geoname_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                to_insert
+            )
 
         # Build sighting tuples
         for sight_dict, loc_id in zip(sight_batch, loc_ids):
             sight_dict["location_id"] = loc_id
+
+        # Translate the human-readable origin name an importer may have
+        # attached into the source_origin FK. Aggregator rows (UPDB,
+        # GELDREICH) carry the body that originally reported the case, which
+        # is what makes "MUFON via UPDB" distinguishable from the retired
+        # mufon.csv import -- the v0.16 purge keyed on exactly that
+        # distinction (source_db_id, never origin_id).
+        #
+        # Done here rather than in parse_row because it needs a cursor.
+        # Every row in the batch gets the key so the column list below stays
+        # consistent across dicts.
+        if any("origin_name" in d for d in sight_batch):
+            omap = self._origin_id_map(cur)
+            for d in sight_batch:
+                name = d.pop("origin_name", None)
+                d["origin_id"] = omap.get(name.strip().upper()) if name else None
 
         # Determine columns from the first dict
         columns = list(sight_batch[0].keys())
@@ -221,11 +336,34 @@ class Importer(ABC):
         )
         conn.commit()
 
+    def _origin_id_map(self, cur):
+        """Cached {UPPERCASE origin name: id} from source_origin."""
+        if getattr(self, "_origin_cache", None) is None:
+            cur.execute("SELECT id, name FROM source_origin")
+            self._origin_cache = {n.strip().upper(): i for i, n in cur.fetchall()}
+        return self._origin_cache
+
     def _read_source(self):
         """Read the source file and return a list of dicts."""
         if self.file_format == "json":
             with open(self.file_path, "r", encoding=self.csv_encoding) as f:
-                return json.load(f)
+                data = json.load(f)
+            if self.json_root is not None:
+                if not isinstance(data, dict) or self.json_root not in data:
+                    raise ValueError(
+                        f"{self.source_name}: expected a dict with key "
+                        f"{self.json_root!r} in {self.file_path}, got "
+                        f"{type(data).__name__} with keys "
+                        f"{list(data)[:5] if isinstance(data, dict) else 'n/a'}"
+                    )
+                data = data[self.json_root]
+            if not isinstance(data, list):
+                raise ValueError(
+                    f"{self.source_name}: {self.file_path} did not yield a list "
+                    f"of records (got {type(data).__name__}). Set json_root if "
+                    f"the records are nested under a key."
+                )
+            return data
         else:
             with open(self.file_path, "r", encoding=self.csv_encoding, errors="replace") as f:
                 reader = csv.DictReader(f)

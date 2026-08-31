@@ -96,13 +96,22 @@ class UfocatImporter(Importer):
         raw_text = (raw.get("LOCATION", "") or "").strip() or None
         city = raw_text  # Best we have — often just city name
         state = (raw.get("STATE", "") or "").strip() or None
-        country = (raw.get("COUNTRY", "") or "").strip() or None
+        # UFOCAT genuinely has no COUNTRY column — REGION/STATE carry the
+        # 3-letter code instead. Left as None deliberately, not an oversight.
+        country = None
 
+        # v0.16.4 — the columns are LATITUDE / LONGITUDE, not LAT / LON.
+        # raw.get("LAT") always returned "", so every UFOCAT coordinate was
+        # thrown away and the rows fell back to name-only geocoding: 44.7%
+        # of UFOCAT sightings mapped against 89.3% in the April corpus.
+        # UFOCAT ships its own coordinates and they are the best we have for
+        # this source, so losing them is expensive.
+        # Values carry leading whitespace ("  43.33"); float() copes.
         lat = None
         lon = None
         try:
-            lat_str = raw.get("LAT", "")
-            lon_str = raw.get("LON", "")
+            lat_str = (raw.get("LATITUDE") or "").strip()
+            lon_str = (raw.get("LONGITUDE") or "").strip()
             if lat_str and lon_str:
                 lat = float(lat_str)
                 lon = float(lon_str)
@@ -124,7 +133,7 @@ class UfocatImporter(Importer):
         )
 
         # Duration
-        duration = (raw.get("DURATION", "") or "").strip() or None
+        duration = (raw.get("DUR", "") or "").strip() or None  # v0.16.4: column is DUR
 
         # Safe int helper
         def _int(key):
@@ -135,11 +144,15 @@ class UfocatImporter(Importer):
                 return None
 
         sighting = {
-            "source_record_id": (raw.get("RECORD_ID", "") or "").strip() or None,
+            # v0.16.4 — no RECORD_ID column exists. PRN and URN are the file's
+            # record numbers and agree with each other; PRN is used.
+            "source_record_id": (raw.get("PRN", "") or "").strip() or None,
             "date_event": date_event,
             "date_event_raw": f"{raw.get('YEAR','')}-{raw.get('MO','')}-{raw.get('DAY','')}",
             "time_raw": (raw.get("TIME", "") or "").strip() or None,
-            "description": (raw.get("DESCRIPTION", "") or "").strip() or None,
+            # v0.16.4 — the narrative lives in NOTES; there is no DESCRIPTION
+            # column, so every UFOCAT description was NULL (April had 98,792).
+            "description": (raw.get("NOTES", "") or "").strip() or None,
             "shape": (raw.get("SHAPE", "") or "").strip() or None,
             "color": (raw.get("COLOR", "") or "").strip() or None,
             "duration": duration,

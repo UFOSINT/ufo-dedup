@@ -567,12 +567,17 @@ class TestProcessorConstants:
 
 class TestPipeline:
     def test_step_list(self):
+        # v0.16.3: 17 -> 15. The mufon and reddit import steps were removed
+        # after both sources were purged from the corpus in v0.16; leaving
+        # them meant a rebuild would reinstate them. See tests/test_origins.py.
         from ufosint.pipeline import STEPS, STEP_NAMES
-        assert len(STEPS) == 17
+        assert len(STEPS) == 15
         assert STEP_NAMES[0] == "schema"
         assert STEP_NAMES[-1] == "export"
         assert "analyze" in STEP_NAMES
         assert "audit" in STEP_NAMES
+        assert "mufon" not in STEP_NAMES
+        assert "reddit" not in STEP_NAMES
 
     def test_pipeline_init(self, tmp_path):
         from ufosint.pipeline import Pipeline

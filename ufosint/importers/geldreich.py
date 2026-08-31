@@ -58,11 +58,29 @@ def parse_geldreich_date(date_str, time_str=None):
 
 
 def parse_geldreich_location(loc_str):
-    """Parse free-text location into (city, state, country, raw)."""
-    if not loc_str or not loc_str.strip():
+    """Parse free-text location into (city, state, country, raw).
+
+    majestic.json gives `location` as a list when a case spans several places
+    — historical entries especially, e.g.
+    ['Lyon, France', 'Magonia', 'Mahon, Menorca']. 3,567 of 54,751 records are
+    shaped this way. This used to raise AttributeError on .strip(), which the
+    base importer's bare `except Exception` swallowed as a skip, so those rows
+    vanished from a rebuild without a word.
+
+    The first entry is treated as the primary location because the list runs
+    specific-to-vague; the whole list is kept in `raw` so nothing is lost.
+    """
+    if isinstance(loc_str, (list, tuple)):
+        parts = [str(p).strip() for p in loc_str if p and str(p).strip()]
+        if not parts:
+            return None, None, None, None
+        city, state, country, _ = parse_geldreich_location(parts[0])
+        return city, state, country, "; ".join(parts)
+
+    if not loc_str or not str(loc_str).strip():
         return None, None, None, None
 
-    raw = loc_str.strip()
+    raw = str(loc_str).strip()
 
     # Try "City, State" pattern (US)
     m = re.match(r"^(.+?),\s*([A-Z]{2})$", raw)
@@ -92,6 +110,15 @@ class GeldreichImporter(Importer):
     def csv_encoding(self):
         return "utf-8-sig"
 
+    # majestic.json is {"Majestic Timeline": [ ...54,751 records... ]}, not a
+    # bare list. Without this the base reader returned the dict, iteration
+    # yielded its single key, and the import reported "0 imported, 1 skipped"
+    # while exiting successfully — which is how a full rebuild silently lost
+    # the entire UFO-search source.
+    @property
+    def json_root(self):
+        return "Majestic Timeline"
+
     def parse_row(self, raw):
         # Location
         loc_str = raw.get("location", "")
@@ -109,15 +136,21 @@ class GeldreichImporter(Importer):
             raw.get("date", ""), raw.get("time")
         )
 
-        # Sources array → source_ref
-        sources = raw.get("sources", [])
-        source_ref = ", ".join(sources) if isinstance(sources, list) else str(sources or "")
+        # v0.16.4 — the keys are `source` (the originating compilation, e.g.
+        # "Maj2", "EberhartUFOI") and `ref` (citation list). There is no
+        # `sources` key, so source_ref was empty for every row.
+        sources = raw.get("ref") or raw.get("source") or []
+        source_ref = ", ".join(str(x) for x in sources) if isinstance(sources, list) else str(sources or "")
 
         sighting = {
-            "source_record_id": raw.get("id") or raw.get("record_id"),
+            # v0.16.4 — the key is `source_id` ("Maj2_1"); neither `id` nor
+            # `record_id` exists, so this was NULL throughout.
+            "source_record_id": (raw.get("source_id") or "").strip() or None,
             "date_event": date_event,
             "date_event_raw": date_raw,
-            "description": (raw.get("description", "") or "").strip() or None,
+            # v0.16.4 — the key is `desc`; `description` does not exist, so every
+            # UFO-search narrative was NULL (April had all 54,751).
+            "description": (raw.get("desc", "") or "").strip() or None,
             "source_ref": source_ref or None,
             "raw_json": json.dumps(raw, ensure_ascii=False),
         }
