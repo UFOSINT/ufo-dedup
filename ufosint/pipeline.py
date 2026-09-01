@@ -209,6 +209,26 @@ class Pipeline:
             proc = cls()
             print(f"  [{i + 1}/{len(PROCESSORS)}] {proc.label}...")
             proc.process(conn)
+
+        # NRC word counts are written by the `sentiment` step into
+        # sentiment_analysis.emo_*, but every consumer — the packed map
+        # buffer (bytes 40-47) and the Insights donut — reads
+        # sighting.nrc_*. denormalize_nrc() is the only thing that copies
+        # between them.
+        #
+        # Its sole caller was the root script gerb_overlay.py, deleted in
+        # 56c87c3. That refactor rehomed the script's *other* nuclear.py
+        # function (run_gerb_overlay, now in _step_replay) and missed
+        # this one, so it sat orphaned and every rebuild after it left
+        # sighting.nrc_* NULL for the whole corpus. Nothing failed loudly:
+        # the source rows were fine, VADER writes down a different path,
+        # and no rebuild ran for four months.
+        #
+        # Must stay after the PROCESSORS loop and after the `sentiment`
+        # step — it reads what they produce.
+        from ufosint.processors.nuclear import denormalize_nrc
+        denormalize_nrc(conn)
+
         conn.close()
 
     def _step_replay(self):
